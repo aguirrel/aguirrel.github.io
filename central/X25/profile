@@ -1,0 +1,3 @@
+export OSTYPE=AIX
+	PATH=/usr/bin:/etc:/usr/sbin:/usr/ucb:/sbin:$ORACLE_HOME/bin:.:/online/bin
+export DB_CONNECT=u606/u606

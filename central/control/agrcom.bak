@@ -1,0 +1,332 @@
+/*************************************************************************/
+/*                                                                       */
+/* agrcom.pc  	    : entrada de datos para CRED_COM                     */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 27/07/98                                           */
+/* Compilador       : PRO*C/C++                                          */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define BOOL  unsigned char
+#define TRUE  1
+#define FALSE 0
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+typedef struct
+{
+	char	nro_caj_sf[6];
+	char	cod_tar[3];
+	char	nro_com[16];
+	char	cod_con_com_cie[2];
+	char	cod_con_cie[2];
+} reg_cred_com;
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+    int cont;
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+    VARCHAR     cnro_caj_sf[5];
+    VARCHAR     ccod_tar[2];
+    VARCHAR     cnro_com[15];
+    VARCHAR     ccod_con_com_cie[1];
+    VARCHAR     ccod_con_cie[1];
+
+    VARCHAR     nro_cuo[3];
+    VARCHAR     fec_loc[4];
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_ca[2];
+    VARCHAR     nro_trx[4];
+    VARCHAR     nro_caj[5];
+    VARCHAR     monto[12];
+EXEC SQL END DECLARE SECTION;
+
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+int SetReg( reg_cred_com* pReg )
+{
+/*	EXEC SQL
+		SELECT nro_caj_sf, cod_tar, nro_com, cod_con_com_cie
+		  INTO :nro_caj_sf, :cod_tar, :nro_com, :cod_con_com_cie
+		  FROM cred_com;
+*/
+
+/*	printf("\n\nNRO_CAJ_SF:      %s", nro_caj_sf.arr);
+	printf("\nCOD_TAR:         %s", cod_tar.arr);
+	printf("\nNRO_COM:         %s", nro_com.arr);
+	printf("\nCOD_CON_COM_CIE: %s", cod_con_com_cie.arr);
+	printf("\nCOD_CON_CIE:     %s", cod_con_cie.arr);
+
+
+	if ( strcpy((char*)nro_caj_sf.arr, pReg->nro_caj_sf) == 0 &&
+		     strcpy((char*)cod_tar.arr, pReg->cod_tar) == 0 &&
+		     strcpy((char*)nro_com.arr, pReg->nro_com) == 0 &&
+		     strcpy((char*)cod_con_com_cie.arr, pReg->cod_con_com_cie) == 0 )
+		     strcpy((char*)cod_con_cie.arr, pReg->cod_con_cie) == 0 ) 
+	{
+		return 5;
+	}
+*/
+
+	strcpy( (char*) cnro_caj_sf.arr, pReg->nro_caj_sf);
+	cnro_caj_sf.len = strlen(pReg->nro_caj_sf);
+
+	strcpy( (char*) ccod_tar.arr, pReg->cod_tar);
+	ccod_tar.len = strlen(pReg->cod_tar);
+
+	strcpy( (char*) cnro_com.arr, pReg->nro_com);
+	cnro_com.len = strlen(pReg->nro_com);
+
+	strcpy( (char*) ccod_con_com_cie.arr, pReg->cod_con_com_cie);
+	ccod_con_com_cie.len = strlen(pReg->cod_con_com_cie);
+
+	strcpy( (char*) ccod_con_cie.arr, pReg->cod_con_cie);
+	ccod_con_cie.len = strlen( pReg->cod_con_cie);
+
+
+	strcpy( (char*) cnro_com.arr, "1");
+	cnro_com.len = 1;
+
+        printf(" NROCOM[%*.*s]\n",cnro_com.len,cnro_com.len,cnro_com.arr);
+
+	EXEC SQL
+		SELECT cod_tar 
+		  INTO :ccod_tar
+		  FROM cred_com	
+	  	 WHERE rtrim(ltrim(nro_com))=:cnro_com;
+/*		   AND cod_tar=:ccod_tar
+		   AND nro_caj_sf=:cnro_caj_sf
+		   AND cod_con_com_cie=:ccod_con_com_cie;
+*/
+
+        printf("sqlca.sqlcode [%d]\n",sqlca.sqlcode);       
+	printf("\n\nstrcmp : %d", strcmp( (char*)cnro_com.arr, pReg->nro_com) );	
+
+	printf("\n\nNRO_CAJ_SF:      %s", cnro_caj_sf.arr);
+	printf("\nCOD_TAR:         %s", ccod_tar.arr);
+	printf("\nNRO_COM:         %s", cnro_com.arr);
+	printf("\nCOD_CON_COM_CIE: %s", ccod_con_com_cie.arr);
+	printf("\nCOD_CON_CIE:     %s", ccod_con_cie.arr);
+
+	printf("\n\nNRO_CAJ_SF:      %s", pReg->nro_caj_sf);
+	printf("\nCOD_TAR:         %s", pReg->cod_tar);
+	printf("\nNRO_COM:         %s", pReg->nro_com);
+	printf("\nCOD_CON_COM_CIE: %s", pReg->cod_con_com_cie);
+	printf("\nCOD_CON_CIE:     %s", pReg->cod_con_cie);
+
+	printf("\nCONT : %d", cont);
+
+	if ( cont > 0 )
+		return 5;
+
+/*	EXEC SQL
+		INSERT
+			INTO cred_com (NRO_CAJ_SF, COD_TAR, NRO_COM, COD_CON_COM_CIE, COD_CON_CIE)
+			VALUES (:cnro_caj_sf, :ccod_tar, :cnro_com, :ccod_con_com_cie, :ccod_con_cie);
+*/
+	EXEC SQL
+		INSERT
+			INTO cred_com (NRO_CAJ_SF, COD_TAR, NRO_COM, COD_CON_COM_CIE)
+			VALUES (:cnro_caj_sf, :ccod_tar, :cnro_com, :ccod_con_com_cie);
+
+	EXEC SQL
+		COMMIT;
+
+	return sqlca.sqlcode;
+}
+
+void SetLog( reg_cred_com* pReg, FILE* pFile )
+{
+	fprintf(pFile, "\n\nNRO_CAJ_SF:      %s", pReg->nro_caj_sf);
+	fprintf(pFile, "\nCOD_TAR:         %s", pReg->cod_tar);
+	fprintf(pFile, "\nNRO_COM:         %s", pReg->nro_com);
+	fprintf(pFile, "\nCOD_CON_COM_CIE: %s", pReg->cod_con_com_cie);
+	fprintf(pFile, "\nCOD_CON_CIE:     %s", pReg->cod_con_cie);
+}
+
+void CleanAndExit(FILE* pFile)
+{
+	time_t  hIni;
+	printf("\n\nSalida por CleanAndExit\n\n");
+	fprintf(pFile,"\n\nSalida por CleanAndExit\n\n");
+	hIni=time(&hIni);
+        fprintf(pFile, "\nFin: %s\n", asctime(localtime(&hIni)) );
+	fclose( pFile );
+	exit(-1);
+}
+
+void main (int argc, char *argv[])
+{
+  FILE *fd;
+  time_t  hIni;
+  reg_cred_com Reg;
+  int iReturn;
+  char	szComAuto[16];
+  int 	iSN;
+  BOOL bAutomatico = FALSE;
+  BOOL bContinue = TRUE;
+
+  printf("Apertura del archivo agrcom.log\n\n");
+  if ( (fd=fopen("/online/log/agrcom.log", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura de archivo agrcom.log\n");
+    exit(-1);
+  }
+
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+
+   hIni=time(&hIni);
+   printf("\nInicio: %s\n", asctime(localtime(&hIni)) );
+   fprintf(fd, "\nInicio: %s\n", asctime(localtime(&hIni)) );
+
+	system("clear"); 
+	do
+ 	{
+		printf("\n\n\n\t¿ Usar NRO_COM automatico (S/N) ? :");
+		iSN = toupper( getchar() );
+		fflush( stdin );
+		if ( iSN == 'S' )
+		{
+			printf("\nIngrese el NRO_COM a usar by default :");
+			gets(szComAuto);
+			bAutomatico = TRUE;
+		}		
+	} while ( iSN != 'S' && iSN != 'N' );
+
+
+   while( bContinue )
+   {
+
+	system("clear"); 
+	printf("\n\n\t\tALTA DE COMERCIOS\n\n\n");
+
+	/* Tomo NRO_CAJ_SF */
+	printf("NRO_CAJ_SF: "); 
+	gets( Reg.nro_caj_sf );
+
+	/* Tomo COD_TAR */
+	printf("\nCOD_TAR: ");
+	gets( Reg.cod_tar );
+
+	/* Si configuro automatico no pregunto el numero de comercio */
+	if ( bAutomatico )
+	{
+		printf("\nNRO_COM: %s", szComAuto);
+		strcpy( Reg.nro_com, szComAuto );
+	}
+	else
+	{
+		printf("\nNRO_COM: ");
+		gets(Reg.nro_com);
+	}
+
+	printf("\nCOD_CON_COM_CIE: 1");
+	strcpy( Reg.cod_con_com_cie, "1" );
+
+	printf("\nCOD_CON_CIE: 0");
+	strcpy( Reg.cod_con_cie, "0" );
+
+	printf("\n\n\t¿ Graba (?/N) ?");
+	iSN = toupper( getchar() );
+	fflush( stdin );
+	if ( iSN != 'N' )
+	{
+		iReturn = SetReg( &Reg );
+		switch(iReturn)
+		{
+	           case 0: break;  
+		   case 5:
+			printf("\nRegistro duplicado, no se agregara a la tabla!");
+			fprintf(fd, "\nRegistro duplicado, no se agregara a la tabla!");
+			break;
+		   default:
+			printf("sqlca.sqlcode != 0  :  %d", iReturn );
+			fprintf(fd, "sqlca.sqlcode != 0  :  %d", iReturn );
+			CleanAndExit(fd);
+			break;
+		}
+		SetLog( &Reg, fd );
+	}
+
+	printf("\n\t¿ Continua (?/N) ?");
+	iSN = toupper( getchar() );
+	fflush( stdin );
+	if ( iSN == 'N' )
+		CleanAndExit( fd );
+   }
+
+  printf("\nSaliendo del programa...\n");
+  fprintf(fd, "\nSaliendo del programa...\n");
+  fclose(fd);
+}
+
+
+
+

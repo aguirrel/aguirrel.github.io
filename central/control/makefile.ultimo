@@ -1,0 +1,305 @@
+#definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+#Distintas versiones de ORACLE
+ORACLE_HOME=/u01/app/oracle/product/7.3.2
+#ORACLE_HOME=/home/oracle
+
+
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+CC=xlc
+CCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+CCC=xlC
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+PCC=proc
+PCCINC=${ORACLE_HOME}/proc/lib
+
+PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=semantics userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=syntax userid=u601/u601 lines=yes ireclen=132
+
+
+# Librerias de la base de datos relacional (ORACLE):
+ORACLELIBS= -lcore -lcv6 -lnlsrtl -lserver -lsql -lsqlnet -L${ORACLE_HOME}/lib ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp
+
+# Librerias propias
+USRLIBS= -L$(LFILES) -ldatabase
+
+# Librerias del sistema
+SYSLIBS= -lc -lm -lld /lib/crt0.o
+
+ALLIBS=$(USRLIBS) $(SYSLIBS) $(LIBS)
+
+#Existen tres versiones de librerias de ORACLE
+
+# ORACLE 7.2 (aix 3.2.5)
+#LIBS=-L./mensajes -L./eventos -L$(LFILES) -lmsgs -levents -ldatabase \
+#     -lcore -lcv6 -lnlsrtl -lora -lsql -lsqlnet -L${ORACLE_HOME}/lib \
+#     ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp -lc -lm -lld /lib/crt0.o -lbsd
+
+# ORACLE 7.2 (aix 4.1.4)
+#LIBS=-L${ORACLE_HOME}/lib -lsql ${ORACLE_HOME}/lib/osntab.o -lsqlnet -lora -lora -lnlsrtl3 -lc3v6 -lcore3 -lnlsrtl3 -lcore3 -lm -lld -lm -lm -lld -lm
+
+#ORACLE 7.3.2.3 (aix 4.1.4)
+LIBS= -L${ORACLE_HOME}/lib -lcore3 -lc3v6 -lnlsrtl3 -lserver -lgeneric -lcommon -lsqlnet -lncr -lepc -lsql -lclient
+
+.SUFFIXES: .pc
+
+.pc.o:
+	$(PCC) $(PCCFLG) iname=$<
+	$(CC) $(CCFLG) -c $*.c
+	@rm $*.c
+
+.C.o:
+#	$(CCC) $(CCCFLG) -c -DTERMTABLE_CLASS_TEST $<
+	$(CCC) $(CCCFLG) -c $<
+
+all: procpen     
+
+clean:
+	-rm *.o *.a *.c
+
+$(EFILES)abiertoupd: $(OFILES)abiertoupd.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)abiertoupd.o \
+                                 -o $(EFILES)abiertoupd
+
+$(OFILES)abiertoupd.o: abiertoupd.pc 
+	$(PCC) $(PCCFLG) iname=abiertoupd.pc
+	$(CC) $(CCFLG) -o$(OFILES)abiertoupd.o -c abiertoupd.c 
+	@rm abiertoupd.c
+
+
+$(EFILES)abierto: $(OFILES)abierto.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)abierto.o \
+                                 -o $(EFILES)abierto
+
+$(OFILES)abierto.o: abierto.pc 
+	$(PCC) $(PCCFLG) iname=abierto.pc
+	$(CC) $(CCFLG) -o$(OFILES)abierto.o -c abierto.c 
+	@rm abierto.c
+
+$(EFILES)abierto2: $(OFILES)abierto2.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)abierto2.o \
+                                 -o $(EFILES)abierto2
+
+$(OFILES)abierto2.o: abierto2.pc 
+	$(PCC) $(PCCFLG) iname=abierto2.pc
+	$(CC) $(CCFLG) -o$(OFILES)abierto2.o -c abierto2.c 
+	@rm abierto2.c
+
+
+$(EFILES)c: $(OFILES)c.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)c.o \
+                                 -o $(EFILES)c
+
+$(OFILES)c.o: c.pc 
+	$(PCC) $(PCCFLG) iname=c.pc
+	$(CC) $(CCFLG) -o$(OFILES)c.o -c c.c 
+	@rm c.c
+
+gencie: $(OFILES)gencie.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)gencie.o \
+                                 -o $(EFILES)gencie
+
+$(OFILES)gencie.o: gencie.pc 
+	$(PCC) $(PCCFLG) iname=gencie.pc
+	$(CC) $(CCFLG) -o$(OFILES)gencie.o -c gencie.c 
+	@rm gencie.c
+
+convertir: $(OFILES)convertir.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)convertir.o \
+                                 -o $(EFILES)convertir
+
+$(OFILES)convertir.o: convertir.pc 
+	$(PCC) $(PCCFLG) iname=convertir.pc
+	$(CC) $(CCFLG) -o$(OFILES)convertir.o -c convertir.c 
+	@rm convertir.c
+
+setvtacard: $(OFILES)setvtacard.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)setvtacard.o \
+                                 -o $(EFILES)setvtacard
+
+$(OFILES)setvtacard.o: setvtacard.pc 
+	$(PCC) $(PCCFLG) iname=setvtacard.pc
+	$(CC) $(CCFLG) -o$(OFILES)setvtacard.o -c setvtacard.c 
+	@rm setvtacard.c
+
+Random: $(OFILES)Random.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)Random.o \
+                                 -o $(EFILES)Random
+
+$(OFILES)Random.o: Random.pc 
+	$(PCC) $(PCCFLG) iname=Random.pc
+	$(CC) $(CCFLG) -o$(OFILES)Random.o -c Random.c 
+	@rm Random.c
+
+desdepuracion: $(OFILES)desdepuracion.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)desdepuracion.o \
+                                 -o $(EFILES)desdepuracion
+
+$(OFILES)desdepuracion.o: desdepuracion.pc 
+	$(PCC) $(PCCFLG) iname=desdepuracion.pc
+	$(CC) $(CCFLG) -o$(OFILES)desdepuracion.o -c desdepuracion.c 
+	@rm desdepuracion.c
+
+depuracion: $(OFILES)depuracion.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)depuracion.o \
+                                 -o $(EFILES)depuracion
+
+$(OFILES)depuracion.o: depuracion.pc 
+	$(PCC) $(PCCFLG) iname=depuracion.pc
+	$(CC) $(CCFLG) -o$(OFILES)depuracion.o -c depuracion.c 
+	@rm depuracion.c
+
+depuracionex: $(OFILES)depuracionex.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)depuracionex.o \
+                                 -o $(EFILES)depuracionex
+
+$(OFILES)depuracionex.o: depuracionex.pc 
+	$(PCC) $(PCCFLG) iname=depuracionex.pc
+	$(CC) $(CCFLG) -o$(OFILES)depuracionex.o -c depuracionex.c 
+	@rm depuracionex.c
+
+agrcom: $(OFILES)agrcom.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)agrcom.o \
+                                 -o $(EFILES)agrcom
+
+$(OFILES)agrcom.o: agrcom.pc 
+	$(PCC) $(PCCFLG) iname=agrcom.pc
+	$(CC) $(CCFLG) -o$(OFILES)agrcom.o -c agrcom.c 
+	@rm agrcom.c
+
+pasaje: $(OFILES)pasaje.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)pasaje.o \
+                                 -o $(EFILES)pasaje
+
+$(OFILES)pasaje.o: pasaje.pc 
+	$(PCC) $(PCCFLG) iname=pasaje.pc
+	$(CC) $(CCFLG) -o$(OFILES)pasaje.o -c pasaje.c 
+	@rm pasaje.c
+
+fixcom: $(OFILES)fixcom.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)fixcom.o \
+                                 -o $(EFILES)fixcom
+
+$(OFILES)fixcom.o: fixcom.pc 
+	$(PCC) $(PCCFLG) iname=fixcom.pc
+	$(CC) $(CCFLG) -o$(OFILES)fixcom.o -c fixcom.c 
+	@rm fixcom.c
+
+fixcomtemp: $(OFILES)fixcomtemp.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)fixcomtemp.o \
+                                 -o $(EFILES)fixcomtemp
+
+$(OFILES)fixcomtemp.o: fixcomtemp.pc 
+	$(PCC) $(PCCFLG) iname=fixcomtemp.pc
+	$(CC) $(CCFLG) -o$(OFILES)fixcomtemp.o -c fixcomtemp.c 
+	@rm fixcomtemp.c
+
+estado: $(OFILES)estado.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)estado.o \
+                                 -o $(EFILES)estado
+
+$(OFILES)estado.o: estado.pc 
+	$(PCC) $(PCCFLG) iname=estado.pc
+	$(CC) $(CCFLG) -o$(OFILES)estado.o -c estado.c 
+	@rm estado.c
+
+procpen: $(OFILES)procpen.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)procpen.o \
+                                 -o $(EFILES)procpen
+
+$(OFILES)procpen.o: procpen.pc 
+	$(PCC) $(PCCFLG) iname=procpen.pc
+	$(CC) $(CCFLG) -o$(OFILES)procpen.o -c procpen.c 
+	@rm procpen.c
+
+BorraVtas: $(OFILES)BorraVtas.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)BorraVtas.o \
+                                 -o $(EFILES)BorraVtas
+
+$(OFILES)BorraVtas.o: BorraVtas.pc 
+	$(PCC) $(PCCFLG) iname=BorraVtas.pc
+	$(CC) $(CCFLG) -o$(OFILES)BorraVtas.o -c BorraVtas.c 
+	@rm BorraVtas.c
+
+BorraVtacard: $(OFILES)BorraVtacard.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)BorraVtacard.o \
+                                 -o $(EFILES)BorraVtacard
+
+$(OFILES)BorraVtacard.o: BorraVtacard.pc 
+	$(PCC) $(PCCFLG) iname=BorraVtacard.pc
+	$(CC) $(CCFLG) -o$(OFILES)BorraVtacard.o -c BorraVtacard.c 
+	@rm BorraVtacard.c
+
+cargatotex: $(OFILES)cargatotex.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)cargatotex.o \
+                                 -o $(EFILES)cargatotex
+
+$(OFILES)cargatotex.o: cargatotex.pc 
+	$(PCC) $(PCCFLG) iname=cargatotex.pc
+	$(CC) $(CCFLG) -o$(OFILES)cargatotex.o -c cargatotex.c 
+	@rm cargatotex.c
+
+convertplus: $(OFILES)convertplus.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)convertplus.o \
+                                 -o $(EFILES)convertplus
+
+$(OFILES)convertplus.o: convertplus.pc 
+	$(PCC) $(PCCFLG) iname=convertplus.pc
+	$(CC) $(CCFLG) -o$(OFILES)convertplus.o -c convertplus.c 
+	@rm convertplus.c
+
+trxpendplus: $(OFILES)trxpendplus.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)trxpendplus.o \
+                                 -o $(EFILES)trxpendplus
+
+$(OFILES)trxpendplus.o: trxpendplus.pc 
+	$(PCC) $(PCCFLG) iname=trxpendplus.pc
+	$(CC) $(CCFLG) -o$(OFILES)trxpendplus.o -c trxpendplus.c 
+	@rm trxpendplus.c
+
+
+abierto: $(OFILES)abierto.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)abierto.o \
+                                 -o $(EFILES)abierto
+
+$(OFILES)abierto.o: abierto.pc 
+	$(PCC) $(PCCFLG) iname=abierto.pc
+	$(CC) $(CCFLG) -o$(OFILES)abierto.o -c abierto.c 
+	@rm abierto.c
+
+
+abierto: $(OFILES)abierto.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)abierto.o \
+                                 -o $(EFILES)abierto
+
+$(OFILES)abierto.o: abierto.pc 
+	$(PCC) $(PCCFLG) iname=abierto.pc
+	$(CC) $(CCFLG) -o$(OFILES)abierto.o -c abierto.c 
+	@rm abierto.c
+
+abierto: $(OFILES)abierto.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)abierto.o \
+                                 -o $(EFILES)abierto
+
+$(OFILES)abierto.o: abierto.pc 
+	$(PCC) $(PCCFLG) iname=abierto.pc
+	$(CC) $(CCFLG) -o$(OFILES)abierto.o -c abierto.c 
+	@rm abierto.c
+
+
+devoluciones: $(OFILES)devoluciones.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)devoluciones.o \
+                                 -o $(EFILES)devoluciones
+
+$(OFILES)devoluciones.o: devoluciones.pc 
+	$(PCC) $(PCCFLG) iname=devoluciones.pc
+	$(CC) $(CCFLG) -o$(OFILES)devoluciones.o -c devoluciones.c 
+	@rm devoluciones.c
+

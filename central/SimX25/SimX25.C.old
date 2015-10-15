@@ -1,0 +1,344 @@
+#include "Queues.h"
+#include "8583.h"
+#include "Config.h"
+#include "GenResI.h"
+#include <sys/m_param.h>
+#include <unistd.h>
+#define MAXDELAY 40
+
+void Init();
+void ImpMen(Iso_Msg*);
+void GenRes(Iso_Msg*, char* ,int*);
+void ImpMenRes(char *,int);
+void EnvMenRes(char*,int);
+void GenDelay();
+
+Queue  XQueue;
+Queue  EQueue;
+Config Cfg("credito.ini");
+
+
+
+struct strRelMsg 
+{
+    int SndEvn;             // Evento de envio.
+    int RtaEvn;             // Evento de respuesta.
+};    
+
+// Pares Tipo Mensaje = Evento Respuesta...
+//
+struct strRelMsg DefEventPairs[]=
+{
+    {TYPE_VISA_VENTA,               EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_VENTA_RTA,           EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_DEVOL,               EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_DEVOL_RTA,           EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_VENTA,          EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_VENTA_RTA,      EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_DEVOL,          EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_DEVOL_RTA,      EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_VENTA_LOCAL,         EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_VENTA_LOCAL_RTA,     EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_DEVOL_LOCAL,         EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_DEVOL_LOCAL_RTA,     EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_ANUL_VENTA_LOCAL,    EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_ANUL_VENTA_LOCAL_RTA,EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_ANUL_DEVOL_LOCAL,    EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_DEVOL_LOCAL_RTA,EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_REV_VENTA,           EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_VENTA_RTA,       EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_DEVOL,           EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_DEVOL_RTA,       EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_ANUL_VENTA,      EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_ANUL_VENTA_RTA,  EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_ANUL_DEVOL,      EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_ANUL_DEVOL_RTA,  EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_CIERRE,              EVENT_CIERRE_RTA}, 
+    {TYPE_VISA_CIERRE_RTA,          EVENT_CIERRE_RTA}, 
+    {TYPE_VISA_CIERRE_B,            EVENT_CIERRE_RTA},
+    {TYPE_VISA_CIERRE_B_RTA,        EVENT_CIERRE_RTA},
+    {TYPE_VISA_BATCH,               EVENT_BATCH_RTA},
+    {TYPE_VISA_BATCH_RTA,           EVENT_BATCH_RTA},
+    {TYPE_VISA_TEST,                EVENT_ECHOTEST_RTA},
+    {TYPE_VISA_TEST_RTA,            EVENT_ECHOTEST_RTA},
+    {-1,-1}                                         //Fin de tabla.
+};
+
+
+
+main()
+{
+      int rc;
+      int len;
+      int pid;
+      char msg_str[3000]={0};
+      char StrRes[700];
+      FILE* fd;
+      Iso_Msg* MsgLeido;
+      Iso_Msg* MsgEnv;
+
+      Init();
+
+      while (1)
+      {
+	  fd=fopen("/online/log/X25Sim","a");
+	  fprintf(fd,"Main:: Esperando mensaje de cola X25\n");
+	  fclose(fd);
+
+	  len=XQueue.GetMsg(0,msg_str,sizeof(msg_str));
+	  if (len==-1)
+	  {
+	       fd=fopen("/online/log/X25Sim","a");
+               fprintf(fd,"Main:: Error en recepcion de mensaje\n");
+	       fclose(fd);
+               exit(1);
+          }
+	  pid=fork();
+          if (pid>0)
+               continue; 
+	  if (pid<0)
+	  {
+	       fd=fopen("/online/log/X25Sim","a");
+	       fprintf(fd,"Error al lanzar hijo\n");
+               fclose(fd);
+	       exit(1);
+          }
+	  if (pid==0)
+          {
+	      MsgLeido = new Iso_Msg(msg_str,len);
+	      fd=fopen("/online/log/X25Sim","a");
+	      fprintf(fd,"Main::Hijo lanzado\n");
+	      fclose(fd);
+              ImpMen(MsgLeido); 
+              GenRes(MsgLeido,StrRes,&len);
+              ImpMenRes(StrRes,len);
+              EnvMenRes(StrRes,len);
+	      exit(1);
+          }
+     }      
+}
+
+
+void EnvMenRes(char* StrRes,int len)
+{
+    int counter,ret;
+    int TipoFrom;
+    Iso_Msg* Msg;
+    FILE* fd;
+
+    Msg = new Iso_Msg(StrRes,len);
+    TipoFrom = Msg->GetMsgType();
+
+    fd=fopen("/online/log/X25Sim","a");
+    fprintf(fd,"EnvMenRes:: Enviando Respuesta de Longitud [%d]\n",len);
+    fclose(fd);
+
+    for (counter=0;DefEventPairs[counter].SndEvn!=1;counter++)
+    { 
+       if (DefEventPairs[counter].SndEvn==TipoFrom)
+       {
+	  fd=fopen("/online/log/X25Sim","a");
+	  fprintf(fd,"EnvMenRes:: Par: Mensaje ==> [%d]  Evento ==> [%d]\n",
+		      TipoFrom,DefEventPairs[counter].RtaEvn);
+          fclose(fd);
+          break;
+       }
+    }
+    if (DefEventPairs[counter].SndEvn==-1)
+    {
+       fd=fopen("/online/log/X25Sim","a");
+       fprintf(fd,"EnvMenRes:: No pude encontrar Par de [%d]\n",TipoFrom);
+       fclose(fd);
+       return;
+    }
+    ret=EQueue.SendMsg(DefEventPairs[counter].RtaEvn,StrRes,len);
+    if (ret==-1)
+    {
+       fd=fopen("/online/log/X25Sim","a");
+       fprintf(fd,"EnvMenRes:: Error al escribir cola de eventos\n");
+       fclose(fd);
+    }
+    else
+    {
+       fd=fopen("/online/log/X25Sim","a");
+       fprintf(fd,"EnvMenRes:: Se escribio en la cola de eventos"
+                  " Ret ==> [%d]\n",ret);
+       fclose(fd);
+    }
+}
+
+
+void GenRes(Iso_Msg* MsgLei, char* StrRes,int* len)
+{
+    int type;
+    FILE* fd;
+
+    type=MsgLei->GetMsgType();
+    fd=fopen("/online/log/X25Sim","a");
+    fprintf(fd,"GenRes:: Tipo de Mensaje [%d]\n",type);
+    fclose(fd);
+    GenDelay();
+    switch(type)
+    {
+       case TYPE_VISA_VENTA:
+            fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje Vta. [%d]\n",type);
+	    fclose(fd);
+            GenRtaVta(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_DEVOL:
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje Dev.  [%d]\n",type);
+	    fclose(fd);
+	    GenRtaDev(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_VENTA_LOCAL:
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje Venta Local [%d]\n",type);
+	    fclose(fd);
+	    GenRtaVtaLoc(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_DEVOL_LOCAL:
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje Dev. Local [%d]\n",type);
+	    fclose(fd);
+	    GenRtaDevLoc(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_TEST:      
+            fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje Echo Test [%d]\n",type);
+	    fclose(fd);
+	    GenRtaEchTst(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_BATCH: 
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje Batch UpLoad [%d]\n",type);
+	    fclose(fd);
+	    GenRtaBatUpl(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_CIERRE:
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje de Cierre [%d]\n",type);
+	    fclose(fd);
+	    GenRtaCie(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_REV_VENTA:
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje de Reverso de venta [%d]\n",type);
+	    fclose(fd);
+	    GenRtaRevVen(MsgLei,StrRes,len);
+	    break;
+       case TYPE_VISA_REV_DEVOL:
+	    fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Mensaje de Reverso de Dev. [%d]\n",type);
+	    fclose(fd);
+	    GenRtaRevDev(MsgLei,StrRes,len);
+            break;
+       default:
+            fd=fopen("/online/log/X25Sim","a");
+	    fprintf(fd,"GenRes:: Tipo de mensaje desconocido ==> [%d]\n",type);
+            fclose(fd);
+     }
+}
+
+
+void Init(void)
+{
+     char CfgItem[200];
+     int QID;
+     int ret;
+     int QPe;
+     FILE* fd;
+
+     fd=fopen("/online/log/X25Sim","a");
+     fprintf(fd,"Init:: Abriendo cola X25 y cola de eventos..\n");
+     fclose(fd);
+
+     Cfg.GetItem("CAVisaDaemon","QueueID",CfgItem);
+     QID=atoi(CfgItem);
+     Cfg.GetItem("CAVisaDaemon","QueuePerms",CfgItem);
+     QPe=atoi(CfgItem);
+
+     ret=XQueue.Create(QID,QPe);
+     if (ret==-1)
+     {
+	 fd=fopen("/online/log/X25Sim","a");
+	 fprintf(fd,"Error al abrir cola X25\n");
+	 fclose(fd);
+	 exit(1);
+     }
+     ret=XQueue.Flush(0);
+
+     Cfg.GetItem("VisaDaemon","QueueID",CfgItem);
+     ret=EQueue.Open(atoi(CfgItem));
+     if (ret==-1)
+     {
+	 fd=fopen("/online/log/X25Sim","a");
+	 fprintf(fd,"Error al abrir cola de eventos\n");
+	 fclose(fd);
+	 exit(1);
+     }
+}
+
+void ImpMen(Iso_Msg* Msg)
+{
+    FILE* fd;
+    int type;   
+
+    type=Msg->GetMsgType();
+    fd=fopen("/online/log/X25Sim","a");
+    fprintf(fd,"ImpMen:: Mensaje Recibido ==> [%d]\n",type);
+    fprintf(fd,"ImpMen:: Nro de Tarjeta: [%s]\n",Msg->GetField(2));
+    fprintf(fd,"ImpMen:: Codigo de Comercio: [%s]\n",Msg->GetField(42));
+    fprintf(fd,"ImpMen:: Codigo de Terminal: [%s]\n",Msg->GetField(41));
+    fprintf(fd,"ImpMen:: Datos Track2: [%s]\n",Msg->GetField(35));
+    fprintf(fd,"ImpMen:: Fecha de Expiracion: [%s]\n",Msg->GetField(14));
+    fclose(fd);
+}
+
+
+void ImpMenRes(char* StrRes,int len)
+{
+   FILE* fd;
+   Iso_Msg* Msg;
+   
+   
+   Msg = new Iso_Msg(StrRes,len);
+   fd=fopen("/online/log/X25Sim","a");
+   fprintf(fd,"ImpMenRes:: Long. de string de generacion [%d]\n",len);
+   fprintf(fd,"ImpMenRes:: Codigo de Respuesta ==> [%06d]\n",Msg->GetMsgType());
+   fprintf(fd,"ImpMenRes:: Numero de Tarjeta [%s]\n",Msg->GetField(2));
+   fprintf(fd,"ImpMenRes:: Codigo de Procesamiento [%s]\n",Msg->GetField(3));
+   fprintf(fd,"ImpMenRes:: Importe [%s]\n",Msg->GetField(4));
+   fprintf(fd,"ImpMenRes:: Fecha y Hora [%s]\n",Msg->GetField(7));
+   fprintf(fd,"ImpMenRes:: Numero de trace [%s]\n",Msg->GetField(11));
+   fprintf(fd,"ImpMenRes:: Codigo de Autorizacion [%s]\n",Msg->GetField(38));
+   fprintf(fd,"ImpMenRes:: Codigo de Respuests [%s]\n",Msg->GetField(39));
+   fprintf(fd,"ImpMenRes:: Id. de la terminal [%s]\n",Msg->GetField(41));
+   fprintf(fd,"ImpMenRes:: Id. del comercio [%s]\n",Msg->GetField(42));
+   fclose(fd);
+}
+  
+
+void GenDelay()
+{
+   int rc;
+   FILE* fd;
+   
+   fd=fopen("/online/log/X25Sim","a");
+   fclose(fd);
+
+   rc=GenSem();
+   fd=fopen("/online/log/X25Sim","a");
+   fprintf(fd,"GenDelay:: Semilla Generada ==> [%d]\n",rc);
+   fclose(fd);
+   srand(rc);
+   rc=rand();
+   rc=rc%MAXDELAY;
+   fd=fopen("/online/log/X25Sim","a");
+   fprintf(fd,"GenDelay:: Delay Generado ==> [%d]\n",rc);
+   fclose(fd);
+   sleep(rc);
+}
+
+

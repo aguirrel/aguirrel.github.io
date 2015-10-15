@@ -1,0 +1,985 @@
+#ifdef OS_Linux
+#pragma pack(1)
+#endif
+
+/*
++------------------------------------------------------------------------------+
+|                   Copyright (C) 2003 - COTO CICSA                            |
++-----------------+------------------------------------------------------------+
+| Fuente          | DBFunc.pc                                                  |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+| Descripcion     | Funciones de acceso a la base de datos para la nueva       |
+|                 | conciliacion del Sistema de Credito                        |
++-----------------+------------------------------------------------------------+
+*/
+#include "DBFunc.h"
+
+#include "stdio.h"
+#include "stdlib.h"
+
+int SqlErrno;
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR	userid[40];
+	VARCHAR	fec_aux[20];
+	VARCHAR	fec_fin[20];
+	VARCHAR	nro_caj_fic[6];
+	VARCHAR	dir_vta[60];
+	long    aux_monto;
+	long	cant_vta;
+	long	tot_vta;
+	long	max_pendi;
+	long	cant_pendi;
+	VARCHAR aux_fec[15];
+	VARCHAR	mod_env[3];
+	double 	monto_aux;
+	VARCHAR fecha_aux[7];
+	VARCHAR	cod_aut_loc[7];
+	VARCHAR	nro_suc[4];
+	VARCHAR	nro_caj_sf[6];
+	VARCHAR	nro_trx[4];
+	VARCHAR	nro_caj[5];
+	VARCHAR nro_caj_aux[5];
+	VARCHAR	cod_trx[2];
+	VARCHAR	nro_tar[20];
+	VARCHAR	cod_tar[2];
+	VARCHAR	cod_aut[6];
+	VARCHAR	monto[12];
+	VARCHAR	fec_trx[6];
+	VARCHAR	plan_sf[2];
+	VARCHAR	nro_cuo[3];
+	VARCHAR	hora[6];
+	VARCHAR	xRowid[30];
+	VARCHAR	nro_ca[2];
+	VARCHAR	nro_lot[3];
+	VARCHAR	cod_pro[6];
+	VARCHAR	fec_loc[10];
+	VARCHAR	fec_ven[4];
+	VARCHAR mod_ing[3];	
+	VARCHAR	nro_tic[4];
+	VARCHAR	nro_caj_ca[8];
+	VARCHAR	fec_vtacard[10];
+	VARCHAR	nro_com[15];
+	VARCHAR	plan_iso[1];
+	VARCHAR	cod_mon[3];
+	VARCHAR	cod_con_cie[1];
+	VARCHAR	cod_con_cie_com[1];
+	VARCHAR	mod_aut[2];
+	VARCHAR	cod_est[3];
+	VARCHAR desc_err[51];
+	VARCHAR est_final[3];
+	VARCHAR fecha_conc[10];
+	VARCHAR min_fec_trx[9];
+	VARCHAR max_fec_trx[9];
+EXEC SQL END DECLARE SECTION;
+
+/*
+   Se marcan temporalmente las transacciones con una fecha de conciliacion
+   cualquiera para que al sumarlas no incluyan transacciones cerradas de
+   otras corridas anteriores del mismo dia. Si cierra bien, actualiza a la
+   fecha del dia. Si cierra mal hace rollback y deja todo como estaba.
+   Poniendo la fecha de proceso, causaba problemas si por ejemplo el dia 5
+   se conciliaba el dia 4 (que contenia trx del dia 4 y algunas del 5) y el
+   mismo dia 5 conciliaba tambien el dia 5.
+*/
+
+#define 	FECHA_CONC	"19720229"
+
+EXEC SQL INCLUDE SQLCA;
+
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBConnect                                                  |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion de conexion a la base de datos                     |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+int DBConnect()
+{
+	varcpy(userid, "/");
+
+	EXEC SQL
+		CONNECT :userid;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	SqlErrno=OK;
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBLoguearResultado                                         |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Escribe el resultado de la conciliacion en la tabla de     |
+|                 | logueo CRED_CONC_SUC                                       |
++-----------------+------------------------------------------------------------+
+*/
+void DBLoguearResultado(str_datos_suc* datos_suc, int iError, char *szMensaje)
+{
+	char szAux[64];
+	varcpy(desc_err   , szMensaje);
+	varcpy(nro_caj_sf , datos_suc->nro_caj_sf);
+	sprintf(szAux     , "%02d", iError);
+	varcpy(est_final  , szAux);
+	varcpy(fecha_conc , datos_suc->szFechaProc);
+	varcpy(nro_suc    , datos_suc->nro_suc);
+	cant_pendi = datos_suc->cant_pendi;
+	cant_vta   = datos_suc->cant_vta;
+	tot_vta    = datos_suc->tot_vta;
+
+	if ((iError!=0)&&(iError!=1)&&(iError!=2))
+	{
+		EXEC SQL
+			ROLLBACK;
+	}
+	
+	EXEC SQL
+		INSERT INTO cred_conc_suc
+			(nro_caj_sf, fec_pro, estfina, descripcion, fec_con, nro_suc, 
+			 cant_ghost, cant_pendi, cant_vta, tot_vta)			
+		VALUES 
+			(:nro_caj_sf, sysdate, :est_final, :desc_err, :fecha_conc, :nro_suc,
+			    0, :cant_pendi, :cant_vta, :tot_vta);
+
+	EXEC SQL
+		COMMIT;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBObtFecha                                                 |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Recibe la fecha en formato DD/MM/AAAA y la transforma a    |
+|                 | AAAAMMDD consultando BD para verificar que sea valida      |
++-----------------+------------------------------------------------------------+
+*/
+int DBObtFecha( char* fecing, char* fecsal)
+{ 
+	varcpy(fec_aux, fecing);
+
+	EXEC SQL
+		SELECT TO_CHAR(TO_DATE(:fec_aux,'dd/mm/yyyy'),'yyyymmdd')
+		INTO :fec_fin
+		FROM DUAL; 
+
+	if (sqlca.sqlcode!=0)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(fecsal, fec_fin);
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBCargaTablaVta                                            |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Carga la tabla VTACARD_DIA_NEW con los datos del archivo   |
+|                 | de la sucursal para cruzarlo contra la tabla CRED_TRX      |
++-----------------+------------------------------------------------------------+
+*/
+int DBCargaTablaVta(str_datos_suc* datos_suc, char *fecpro)
+{
+	char buffex[200];
+	char bufarc[200];
+	int  ret;
+	char szDia[3];
+	char szMes[3];
+
+	memset(szDia, 0, sizeof(szDia));
+	memset(szMes, 0, sizeof(szMes));
+	strncpy(szDia, &fecpro[6], 2);
+	strncpy(szMes, &fecpro[4], 2);
+
+	sprintf(bufarc,"%s/vtacard.%s%s",datos_suc->dir_vta, szDia, szMes);
+
+	sprintf(buffex,"sqlldr / control=vtacard_new.ctl data=%s 1>/dev/null 2>&1", bufarc);
+
+	ret=system(buffex);
+
+	if (ret!=OK) 
+	{
+		
+		SqlErrno = NOOK;
+		return NOOK;
+	}
+
+	varcpy(nro_caj_sf , datos_suc->nro_caj_sf);
+	varcpy(nro_suc    , datos_suc->nro_suc);
+
+	EXEC SQL
+		UPDATE vtacard_dia_new 
+		SET nro_caj_sf = :nro_caj_sf,
+			nro_suc    = :nro_suc;
+
+	if ((sqlca.sqlcode!=0)&&(sqlca.sqlcode!=1403))
+	{
+		SqlErrno = sqlca.sqlcode;
+		return NOOK;
+	}
+
+	EXEC SQL
+		SELECT MIN('20'||fec_trx), MAX('20'||fec_trx)
+		INTO   :min_fec_trx, :max_fec_trx
+		FROM vtacard_dia_new;
+	
+	if ((sqlca.sqlcode!=0)&&(sqlca.sqlcode!=1403))
+	{
+		SqlErrno = sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_suc->min_fec_trx , min_fec_trx);
+	varcpy2(datos_suc->max_fec_trx , max_fec_trx);
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBObtDatosSuc                                              |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Obtiene los datos de configuracion de la sucursal que se   |
+|                 | va a conciliar en funcion de la tabla CRED_SUC             |
++-----------------+------------------------------------------------------------+
+*/    
+int DBObtDatosSuc(str_datos_suc* datos_suc)
+{
+	varcpy(nro_caj_sf , datos_suc->nro_caj_sf);
+	varcpy(nro_suc    , datos_suc->nro_suc);
+
+	EXEC SQL
+		SELECT	LTRIM(RTRIM(dir_vta)), nro_caj_fic, max_pendi
+		INTO :dir_vta, :nro_caj_fic, :max_pendi
+		FROM cred_suc
+		WHERE nro_caj_sf = :nro_caj_sf 
+		  AND nro_suc    = :nro_suc
+		  AND tip_cie    = 1;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_suc->dir_vta     , dir_vta);
+	varcpy2(datos_suc->nro_caj_fic , nro_caj_fic);
+	datos_suc->max_pendi  = max_pendi; 
+	datos_suc->cant_pendi = 0;
+	datos_suc->cant_vta   = 0;
+	datos_suc->tot_vta    = 0;
+	datos_suc->tot_cre    = 0;
+	
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBSumVtaCard                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Suma las transacciones de la tabla VTACARD_DIA_NEW         |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/    
+int DBSumVtaCard(str_datos_suc *datos_suc)
+{
+	EXEC SQL
+		SELECT COUNT(1), SUM(DECODE(cod_trx,'00',TO_NUMBER(monto),
+											'08',TO_NUMBER(monto),
+												-TO_NUMBER(monto)))*100
+		INTO :cant_vta, :tot_vta
+		FROM vtacard_dia_new; 
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	datos_suc->cant_vta = cant_vta;
+	datos_suc->tot_vta  = tot_vta;
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBSumCredito                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Suma las transacciones de la tabla CRED_TRX                |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/    
+int DBSumCredito(str_datos_suc *datos_suc,char *fec_pro)
+{
+	varcpy(nro_caj_sf , datos_suc->nro_caj_sf);
+	varcpy(nro_suc    , datos_suc->nro_suc);
+	varcpy(aux_fec    , fec_pro);
+
+	EXEC SQL
+		SELECT NVL(SUM(DECODE(cod_trx,'00',monto,
+									  '08',monto,
+										  -monto)),0)
+		INTO :aux_monto
+		FROM cred_trx
+		WHERE ( ( fec_trx  = TO_DATE(:aux_fec,'YYYYMMDD') AND 
+			      fec_loc >= SUBSTR(:aux_fec,5,4)||'050000'
+			    ) OR
+				( fec_trx  = TO_DATE(:aux_fec,'YYYYMMDD')+1 AND
+				  fec_loc  < TO_CHAR(TO_DATE(:aux_fec,'YYYYMMDD')+1, 'MMDD')||'050000'
+				)
+			  )
+		  AND nro_caj_sf = :nro_caj_sf
+		  AND nro_suc    = :nro_suc
+ 		  AND cod_est   IN ('00','02','04','10','34') 
+		  AND mod_env   IN ('00','01'); 
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	datos_suc->tot_cre= aux_monto;
+	
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBUpdCredito                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Actualiza las transacciones conciliadas en la tabla        |
+|                 | CRED_TRX para la sucursal y  fecha dadas                   |
++-----------------+------------------------------------------------------------+
+*/    
+int DBUpdCredito(str_datos_suc *datos_suc,char *fec_pro)
+{
+	char szAuxFec[5];
+
+	varcpy(nro_caj_sf , datos_suc->nro_caj_sf);
+	varcpy(nro_suc    , datos_suc->nro_suc);
+	varcpy(aux_fec    , fec_pro);
+	
+	memset(szAuxFec, 0, sizeof(szAuxFec));
+	strncpy(szAuxFec, &fec_pro[6], 2);
+	strncat(szAuxFec, &fec_pro[4], 2);
+
+	varcpy(fec_aux    , szAuxFec); 
+
+	EXEC SQL
+		UPDATE cred_trx 
+		SET fec_con     = TO_DATE(SYSDATE),
+			fec_vtacard = :fec_aux
+		WHERE ( ( fec_trx  = TO_DATE(:aux_fec,'YYYYMMDD') AND 
+			      fec_loc >= SUBSTR(:aux_fec,5,4)||'050000'
+			    ) OR
+				( fec_trx  = TO_DATE(:aux_fec,'YYYYMMDD')+1 AND
+				  fec_loc  < TO_CHAR(TO_DATE(:aux_fec,'YYYYMMDD')+1, 'MMDD')||'050000'
+				)
+			  )
+ 		  AND nro_caj_sf = :nro_caj_sf
+		  AND nro_suc    = :nro_suc
+		  AND cod_est   IN ('00','02','04','10','34') 
+		  AND mod_env   IN ('00','01'); 
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBOpenCurVta                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Declara y abre cursor sobre todos los registros de la      |
+|                 | tabla VTACARD_DIA_NEW                                      |
++-----------------+------------------------------------------------------------+
+*/    
+int DBOpenCurVta()
+{
+	EXEC SQL
+		DECLARE curvta CURSOR FOR
+			SELECT	nro_caj_sf,nro_caj,nro_trx,cod_tar,
+					RPAD(LTRIM(nro_tar,'0'),20),
+					NVL(cod_aut,'      ') ,TO_CHAR(TO_NUMBER(monto)*100),
+					fec_trx, cod_trx, plan_sf, nro_cuo, hora,
+					rowid, nro_suc
+			FROM vtacard_dia_new;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	EXEC SQL
+		OPEN curvta;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBObtNextVta                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Obtiene un nuevo registro de la tabla VTACARD_DIA_NEW para |
+|                 | verificar si se encuentra en la CRED_TRX                   |
++-----------------+------------------------------------------------------------+
+*/    
+int DBObtNextVta(str_data_trx *datos_trx)
+{
+	EXEC SQL
+		FETCH curvta 
+		INTO :nro_caj_sf,:nro_caj,:nro_trx,:cod_tar,:nro_tar,
+			 :cod_aut, :monto, :fec_trx, :cod_trx, :plan_sf,
+			 :nro_cuo, :hora, xRowid, :nro_suc;
+
+	if ((sqlca.sqlcode==1403) || (sqlca.sqlcode==-1403))
+	{
+		SqlErrno=0;
+		return NOF;
+	}
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_trx->nro_caj_sf, nro_caj_sf);
+	varcpy2(datos_trx->nro_caj   , nro_caj   );
+	varcpy2(datos_trx->nro_trx   , nro_trx   );
+	varcpy2(datos_trx->cod_tar   , cod_tar   );
+	varcpy2(datos_trx->nro_tar	 , nro_tar   );
+	varcpy2(datos_trx->cod_aut	 , cod_aut   );
+	varcpy2(datos_trx->monto     , monto     );
+	varcpy2(datos_trx->fec_trx	 , fec_trx   );
+	varcpy2(datos_trx->cod_trx	 , cod_trx   );
+	varcpy2(datos_trx->plan_sf	 , plan_sf   );
+	varcpy2(datos_trx->nro_cuo	 , nro_cuo   );
+	varcpy2(datos_trx->hora	     , hora	     );
+	varcpy2(datos_trx->rowidvt 	 , xRowid    );
+	varcpy2(datos_trx->nro_suc   , nro_suc   );
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBVerifCred                                                |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Verifica si la transaccion recuperada de la tabla          |
+|                 | VTACARD_DIA_NEW se encuentra en la CRED_TRX                |
++-----------------+------------------------------------------------------------+
+*/    
+int DBVerifCred(str_data_trx *datos_trx, str_datos_suc *datos_suc, str_logueo *datos_log)  
+{
+	int iMax= 0;
+	datos_log->Monto= -1;
+	datos_log->Fecha[0] = 0;
+
+	varcpy(nro_caj_sf  , datos_trx->nro_caj_sf  );
+	varcpy(nro_trx     , datos_trx->nro_trx     );
+	varcpy(nro_caj     , datos_trx->nro_caj     );
+	varcpy(cod_trx     , datos_trx->cod_trx     );
+	varcpy(nro_tar     , datos_trx->nro_tar     );
+	varcpy(fec_vtacard , datos_trx->fec_vtacard );
+	varcpy(monto       , datos_trx->monto       );
+	varcpy(nro_suc     , datos_trx->nro_suc     );
+	varcpy(nro_caj_fic , datos_suc->nro_caj_fic );
+	varcpy(fec_trx     , datos_trx->fec_trx     );
+
+	EXEC SQL
+		SELECT rowid, monto, NVL(TO_CHAR(fec_trx, 'YYMMDD'),'000000'), nro_caj
+		INTO :xRowid, :monto_aux, :fecha_aux, :nro_caj_aux 
+		FROM cred_trx
+		WHERE nro_caj_sf = :nro_caj_sf 
+		  AND nro_suc = :nro_suc
+		  AND ( nro_caj=:nro_caj OR nro_caj=:nro_caj_fic)
+		  AND nro_trx = :nro_trx
+		  AND LTRIM(RTRIM(DECRYPDBA.DECRYPT(dat_ad5),' '),'0')=LTRIM(RTRIM(:nro_tar,' '),'0')  
+		  AND fec_trx = TO_DATE('20'||:fec_trx,'YYYYMMDD')
+		  AND monto   = :monto 
+		  AND cod_est IN ('00','02','04','10','34','43','45') 
+		  AND mod_env IN ('00','01'); 
+
+	if (sqlca.sqlcode==1403) 
+	{
+		SqlErrno=OK;
+		return NOF;
+	}
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=NOOK;
+		return NOOK;
+	}
+
+	varcpy2(datos_trx->rowidcr,xRowid);
+
+	varcpy2(datos_log->Fecha, fecha_aux);
+	datos_log->Monto= monto_aux;
+	
+	iMax= (nro_caj.len>nro_caj_aux.len) ? nro_caj.len : nro_caj_aux.len;
+	if (strncmp(nro_caj.arr, nro_caj_aux.arr, iMax)==0)
+	{
+		datos_log->Caja= 'O'; /* La caja de la transaccion es la original */
+	}
+	else
+	{
+		datos_log->Caja= 'F'; /* La caja de la transaccion es la ficticia */
+	}
+
+	SqlErrno=OK;
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBIncCred                                                  |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Inserta la transaccion pendiente en la tabla CRED_TRX con  |
+|                 | codigo de estado "43" (Pendiente a revisar)                |
++-----------------+------------------------------------------------------------+
+*/    
+int DBIncCred(str_data_trx *datos_trx)
+{
+	varcpy(nro_suc, datos_trx->nro_suc    );
+	varcpy(nro_caj, datos_trx->nro_caj_fic);
+	varcpy(nro_trx, datos_trx->nro_trx    );
+	varcpy(cod_tar, datos_trx->cod_tar    );
+	varcpy(nro_ca , datos_trx->nro_ca     );
+	varcpy(cod_trx, datos_trx->cod_trx    );
+	varcpy(nro_lot, datos_trx->nro_lot    );
+    
+	if (!strcmp(datos_trx->cod_trx,"00"))
+	{
+		varcpy(cod_pro, "000000");
+		varcpy(cod_est, "00"    );
+	}
+	if (!strcmp(datos_trx->cod_trx,"02"))
+	{
+		varcpy(cod_pro, "200000");
+		varcpy(cod_est, "45"    );
+	}
+	if (!strcmp(datos_trx->cod_trx,"08"))
+	{
+		varcpy(cod_pro, "000010");
+		varcpy(cod_est, "00"    );
+	}
+	if (!strcmp(datos_trx->cod_trx,"09"))
+	{
+		varcpy(cod_pro, "200010");
+		varcpy(cod_est, "45"    );
+	}
+	     
+	varcpy(monto      , datos_trx->monto      );
+	varcpy(nro_tar    , datos_trx->nro_tar    );
+	varcpy(fec_loc    , datos_trx->fec_loc    );
+	varcpy(fec_ven    , "1111"                );
+	varcpy(mod_ing    , "012"                 );
+	varcpy(nro_tic    , datos_trx->nro_trx    );
+	varcpy(cod_aut    , datos_trx->cod_aut    );
+	varcpy(nro_cuo    , datos_trx->nro_cuo    );
+	varcpy(nro_caj_ca , datos_trx->nro_caj_ca );
+	varcpy(fec_vtacard, datos_trx->fec_vtacard);
+	varcpy(nro_caj_sf , datos_trx->nro_caj_sf );
+	varcpy(nro_com    , datos_trx->nro_com    );
+	varcpy(plan_iso   , datos_trx->plan_iso   );
+	varcpy(plan_sf    , datos_trx->plan_sf    );
+	varcpy(cod_mon    , datos_trx->cod_mon    );
+	varcpy(mod_aut    , "20"                  );     
+	varcpy(fecha_conc , FECHA_CONC            );
+
+	/* Cargar codigo autorizacion con ceros a izquierda si no es protocolo AMEX */
+	EXEC SQL
+		SELECT DECODE(tipo_prot, 'A', :cod_aut, LPAD(RTRIM(:cod_aut, ' '), 6, '0'))
+		INTO :cod_aut
+		FROM cred_cas
+		WHERE nro_ca = :nro_ca;
+
+	if (sqlca.sqlcode!=0)
+	{
+		varcpy(cod_aut    , datos_trx->cod_aut    );
+	}
+
+	EXEC SQL
+		INSERT INTO cred_trx 
+			(nro_suc, nro_caj, nro_trx, mod_env, cod_tar, nro_ca ,
+			cod_trx, cod_est, can_ret, nro_lot, cod_pro, monto  , 
+			nro_tar, fec_loc, mod_ing, nro_tic, cod_aut, 
+			nro_cuo, nro_caj_ca, fec_con, nro_caj_sf, nro_com,
+			plan_iso, plan_sf, cod_mon, mod_aut, fec_trx,
+			dat_ad4, dat_ad5)
+		VALUES
+			(:nro_suc, :nro_caj, :nro_trx, '01', :cod_tar, :nro_ca,
+			:cod_trx, :cod_est  , 0	 , :nro_lot, :cod_pro, :monto ,
+			:nro_tar, :fec_loc, :mod_ing, :nro_tic, :cod_aut,
+			:nro_cuo, :nro_caj_ca, TO_DATE(:fecha_conc,'YYYYMMDD'), 
+			:nro_caj_sf, :nro_com, 
+			:plan_iso,:plan_sf, :cod_mon, :mod_aut, 
+			TO_DATE(:fec_vtacard,'YYYYMMDD'),
+			ENCRYPTORA.ENCRYPT(:fec_ven), ENCRYPTORA.ENCRYPT(:nro_tar));
+     
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBCompTrx                                                  |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Completa los datos de la transaccion pendiente con el CA,  |
+|                 | terminal, lote, plan_iso, comercio, moneda y fec_loc       |
++-----------------+------------------------------------------------------------+
+*/    
+int DBCompTrx(str_data_trx *datos_trx, str_datos_suc *datos_suc)
+{
+	char cod_aut_local[10]; 
+	FILE *fdError=NULL;
+
+	varcpy(nro_suc, datos_suc->nro_suc);
+	varcpy(nro_caj, datos_suc->nro_caj_fic);
+	varcpy(cod_tar, datos_trx->cod_tar);
+	varcpy(plan_sf, datos_trx->plan_sf); 
+
+	EXEC SQL
+		SELECT plan_iso,cod_mon,cod_con_cie,cod_con_cie_com
+		INTO :plan_iso,:cod_mon,:cod_con_cie,:cod_con_cie_com
+		FROM cred_plan
+		WHERE plan_sf=:plan_sf 
+		  AND cod_tar=:cod_tar;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		if ((fdError = fopen("/online/log/checvta.err", "wt"))!=NULL)
+		{
+			fprintf(fdError, "ERROR EN SELECT NRO 1\n");
+			fprintf(fdError, "PLAN_SF:[%s][%d] COD_TAR:[%s][%d]\n", 
+							  plan_sf.arr, plan_sf.len, cod_tar.arr, cod_tar.len);
+			fclose(fdError);
+		}
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_trx->plan_iso,plan_iso);
+	varcpy2(datos_trx->cod_mon,cod_mon);
+
+	EXEC SQL
+		SELECT nro_ca INTO :nro_ca
+		FROM cred_tarj
+		WHERE cod_tar=:cod_tar;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		if ((fdError = fopen("/online/log/checvta.err", "wt"))!=NULL)
+		{
+			fprintf(fdError, "ERROR EN SELECT NRO 2\n");
+			fprintf(fdError, "COD_TAR:[%s][%d]\n", 
+							  cod_tar.arr, cod_tar.len);
+			fclose(fdError);
+		}
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_trx->nro_ca, nro_ca);
+
+	EXEC SQL
+		SELECT nro_caj_ca,nro_lot 
+		INTO :nro_caj_ca, :nro_lot
+		FROM cred_term
+		WHERE nro_suc     = :nro_suc
+		  AND nro_caj     = :nro_caj
+		  AND nro_ca      = :nro_ca
+		  AND cod_con_cie = :cod_con_cie;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		if ((fdError = fopen("/online/log/checvta.err", "wt"))!=NULL)
+		{
+			fprintf(fdError, "ERROR EN SELECT NRO 3\n");
+			fprintf(fdError, "NRO_SUC:[%s][%d] NRO_CAJ:[%s][%d] NRO_CA:[%s][%d] COD_CON_CIE:[%s][%d]\n", 
+							  nro_suc.arr, nro_suc.len, nro_caj.arr, nro_caj.len,
+							  nro_ca.arr, nro_ca.len, cod_con_cie.arr, cod_con_cie.len);
+			fclose(fdError);
+		}
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_trx->nro_lot,nro_lot);
+	varcpy2(datos_trx->nro_caj_ca, nro_caj_ca);
+
+	EXEC SQL
+		SELECT nro_com 
+		INTO :nro_com 
+		FROM cred_com  
+		WHERE nro_caj_sf      = :nro_caj_sf
+		  AND nro_suc         = :nro_suc
+		  AND cod_con_com_cie = :cod_con_cie_com
+		  AND cod_tar         = :cod_tar;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		if ((fdError = fopen("/online/log/checvta.err", "wt"))!=NULL)
+		{
+			fprintf(fdError, "ERROR EN SELECT NRO 4\n");
+			fprintf(fdError, "NRO_CAJ_SF:[%s][%d] NRO_SUC:[%s][%d] COD_CON_COM_CIE:[%s][%d] COD_TAR:[%s][%d]\n", 
+							  nro_caj_sf.arr, nro_caj_sf.len, nro_suc.arr, nro_suc.len,
+							  cod_con_cie_com.arr, cod_con_cie_com.len, cod_tar.arr, cod_tar.len);
+			fclose(fdError);
+		}
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	varcpy2(datos_trx->nro_com,nro_com);
+
+	strcpy(datos_trx->nro_suc, datos_suc->nro_suc);
+
+	sprintf(datos_trx->fec_loc,"%s%s00",&datos_trx->fec_trx[2],datos_trx->hora);
+
+	/* Manejo del codigo de autorizacion local */
+	if ( strcmp(datos_trx->cod_aut, "000000") == 0 )
+	{
+		varcpy(cod_tar, datos_trx->cod_tar);
+
+		EXEC SQL
+			SELECT NVL(cod_aut_loc,'000000')
+			INTO :cod_aut_loc
+			FROM cred_tarj 
+			WHERE Cod_tar=:cod_tar;
+
+		if ((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403) && (sqlca.sqlcode!=-1403))
+		{
+			if ((fdError = fopen("/online/log/checvta.err", "wt"))!=NULL)
+			{
+				fprintf(fdError, "ERROR EN SELECT NRO 5\n");
+				fprintf(fdError, "COD_TAR:[%s][%d]\n", 
+								  cod_tar.arr, cod_tar.len);
+				fclose(fdError);
+			}
+			sprintf(datos_trx->cod_aut, "000000");
+		}
+		else
+		{
+			varcpy2(datos_trx->cod_aut, cod_aut_loc);
+		}
+	}
+
+	strcpy(datos_trx->nro_caj_fic, datos_suc->nro_caj_fic);
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBUpdRegistroCredito                                       |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Actualiza el registro conciliado con la fecha temporal     |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/   
+int DBUpdRegistroCredito(str_data_trx *datos_trx)
+{
+	varcpy(xRowid,datos_trx->rowidcr);
+	varcpy(fec_vtacard, datos_trx->fec_vtacard);
+	varcpy(fecha_conc, FECHA_CONC);
+
+	EXEC SQL
+		UPDATE cred_trx 
+		SET fec_con = TO_DATE(:fecha_conc,'YYYYMMDD')
+		WHERE rowid = :xRowid;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBCommit                                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Confirma los movimientos actualizados                      |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/   
+int DBCommit()
+{
+	EXEC SQL
+		COMMIT; 
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBRollback                                                 |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Deshace los movimientos actualizados                       |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/   
+int DBRollback()
+{
+	EXEC SQL
+		ROLLBACK; 
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBSumCreFecVta                                             |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Vuelve a sumar las transacciones sobre la tabla CRED_TRX   |
+|                 | luego de verificar una por una contra la VTACARD_DIA_NEW   |
++-----------------+------------------------------------------------------------+
+*/   
+int DBSumCreFecVta(str_datos_suc *datos_suc,char *fecpro)
+{
+	varcpy(fec_vtacard , fecpro);
+	varcpy(nro_caj_sf  , datos_suc->nro_caj_sf);
+	varcpy(nro_suc     , datos_suc->nro_suc);
+	varcpy(fecha_conc  , FECHA_CONC);
+	varcpy(min_fec_trx , datos_suc->min_fec_trx );
+	varcpy(max_fec_trx , datos_suc->max_fec_trx );
+
+	EXEC SQL 
+	SELECT NVL(SUM(DECODE(cod_trx,'00',monto,
+							      '08',monto,
+								      -monto)) , 0)
+	INTO :aux_monto
+	FROM cred_trx
+	WHERE fec_con    = TO_DATE(:fecha_conc,'YYYYMMDD')
+	  AND fec_trx   >= TO_DATE(:min_fec_trx,'YYYYMMDD')
+	  AND fec_trx   <= TO_DATE(:max_fec_trx,'YYYYMMDD')
+ 	  AND nro_caj_sf = :nro_caj_sf
+	  AND nro_suc    = :nro_suc
+	  AND cod_est   IN ('00','02','04','10','34','43','45') 
+	  AND mod_env   IN ('00','01');
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	datos_suc->tot_cre=aux_monto;
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBCloseCurVta                                              |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Cierra el cursor de transacciones                          |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/   
+int DBCloseCurVta()
+{
+	EXEC SQL
+		CLOSE curvta;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBTruncate                                                 |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Borra todas las transacciones de la tabla VTACARD_DIA_NEW  |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/   
+int DBTruncate()
+{
+	EXEC SQL
+		DELETE vtacard_dia_new;
+
+	if ((sqlca.sqlcode!=0)&&(sqlca.sqlcode!=1403)&&(sqlca.sqlcode!=-1403))
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	EXEC SQL
+		COMMIT;
+
+	if (sqlca.sqlcode!=0)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}   
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | DBActFechaConc                                             |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Actualiza la fecha de las transacciones conciliadas        |
+|                 | (Pasa de la fecha temporal a la del dia de proceso)        |
++-----------------+------------------------------------------------------------+
+*/   
+int DBActFechaConc (str_datos_suc *datos_suc, char *fecpro)
+{
+	char szAuxFec[5];
+
+	varcpy(fec_vtacard , fecpro);
+	varcpy(nro_caj_sf  , datos_suc->nro_caj_sf);
+	varcpy(nro_suc     , datos_suc->nro_suc);
+	varcpy(fecha_conc  , FECHA_CONC);
+	varcpy(min_fec_trx , datos_suc->min_fec_trx );
+	varcpy(max_fec_trx , datos_suc->max_fec_trx );
+
+	memset(szAuxFec, 0, sizeof(szAuxFec));
+	strncpy(szAuxFec, &fecpro[6], 2);
+	strncat(szAuxFec, &fecpro[4], 2);
+
+	varcpy(fec_aux    , szAuxFec); 
+
+	EXEC SQL
+		UPDATE cred_trx 
+		SET fec_con      = TO_DATE(SYSDATE),
+			fec_vtacard  = :fec_aux
+		WHERE fec_con    = TO_DATE(:fecha_conc,'YYYYMMDD')
+		  AND fec_trx >= TO_DATE(:min_fec_trx,'YYYYMMDD')
+		  AND fec_trx <= TO_DATE(:max_fec_trx,'YYYYMMDD')
+		  AND nro_caj_sf = :nro_caj_sf
+		  AND nro_suc    = :nro_suc
+		  AND cod_est   IN ('00','02','04','10','34','43','45')
+		  AND mod_env IN ('00','01');
+
+	if ((sqlca.sqlcode!=0)&&(sqlca.sqlcode!=1403))
+	{
+		SqlErrno= sqlca.sqlcode;
+		return NOOK;
+	}
+
+	return OK;
+}

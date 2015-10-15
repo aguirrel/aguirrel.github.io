@@ -1,0 +1,13 @@
+cd mensajes_5
+make -f makeLinux
+cd ..
+cd oracle_5
+make -f makeLinux
+cd ..
+cd events_5
+make -f makeLinux
+cd ..
+cd objects_5
+make -f makeLinux Daemon
+make -f makeLinux CierreLoteCASuc
+cd ../../bin

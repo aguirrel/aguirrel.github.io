@@ -1,0 +1,59 @@
+/*************************************************************************/
+/*                                                                       */
+/* cargatotex.pc    : Version en Pro*C del script cargatot               */
+/*                                                                       */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 17/07/98                                           */
+/* Compilador       : Pro*C                                              */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+
+#define BOOL char
+#define TRUE 1
+#define FALSE 0
+
+
+void ShowSyntax(char* szProgramName)
+{
+    printf("\nUso: %s <DDMM> ( DD=Dia, MM = Mes)\n\n", szProgramName);
+    printf("Ej: %s 2205 \n", szProgramName);
+    printf("Actuar sobre los registros del 22/05.\n\n");
+    exit(-1);
+}
+
+void main (int argc, char *argv[])
+{
+  char szFecha[10];
+  char szComando[200];
+
+  if ( argc < 2 )
+	ShowSyntax( argv[0] );
+
+  strcpy(szFecha, "1998");
+  strcat(szFecha, argv[1]);
+  sprintf(szComando, "sqlplus -s u601/u601 @/online/visual/populsuctot %s", szFecha);
+  system(szComando);
+  sprintf(szComando, "sqlplus -s u601/u601 @/online/visual/popultertot %s", szFecha);
+  system(szComando);
+}
+
+
+
+

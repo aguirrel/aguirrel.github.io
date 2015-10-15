@@ -1,0 +1,54 @@
+#Definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+CC=cc
+CCFLG= -DOS_$(OSTYPE) -w $(ALLINC) -g
+
+CCC=xlC
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) -g
+
+PCC=proc
+PCCINC=${ORACLE_HOME}/proc/lib
+
+PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=syntax userid=u601/u601 lines=yes ireclen=132
+
+# Librerias de la base de datos relacional (ORACLE):
+
+# ORACLE 7.3.2.3 (aix 4.1.4)
+ORACLELIBS=-L${ORACLE_HOME}/lib -lcore3 -lc3v6 -lnlsrtl3 -lclient -lserver -lgeneric -lcommon -lsqlnet -lncr -lepc -lsql 
+
+#Librerias propias
+USRLIBS=-L$(LFILES) 
+
+# Librerias del sistema
+SYSLIBS=-lc -lm -lld /lib/crt0.o
+SYSLIBS=-lc -lm -lld 
+
+ALLIBS=$(ORACLELIBS) $(USRLIBS) $(SYSLIBS)
+
+.SUFFIXES: .pc .C
+
+.pc.o:
+	$(PCC) $(PCCFLG) iname=$<
+	$(CC) $(CCFLG) -c $*.c
+	@rm $*.c
+
+.C.o:
+	$(CCC) $(CCCFLG) -c $< -o $*.o
+
+all: procpen 
+
+clean:
+	-rm *.o *.a *.c
+
+
+$(OFILES)procpen.o: procpen.o
+	$(PCC) $(PCCFLG) iname=procpen.pc
+	$(CC)  $(CCFLG) -c procpen.c -o$(OFILES)procpen.o
+	@rm procpen.c
+
+procpen: $(OFILES)procpen.o 
+	$(CC) $(CCFLG) $(ALLIBS) $(OFILES)procpen.o \
+	-o $(EFILES2)procpen
+

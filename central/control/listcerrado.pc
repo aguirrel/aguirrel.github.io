@@ -1,0 +1,318 @@
+/************************************************************************/
+/*									*/
+/* listcierre.pc    : Listado de todas las transacciones cerradas       */
+/*                    por el CA.                                        */
+/*                    Da el total por sucursal para cada tarjeta.       */ 
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Denise Lucien 					*/
+/* Fecha	    : 03/02/98						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+ 
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+extern int	SqlErrno;
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+     
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR	nro_caj[5];
+    VARCHAR	nro_caj_sf[5];
+    VARCHAR	monto[12];
+    VARCHAR	fecha[4];
+    VARCHAR	fec_loc[10];
+    VARCHAR	nro_tar[20];
+    VARCHAR	cod_tar[2];
+    VARCHAR	nro_ca[2];
+    VARCHAR	descrip[30];
+    VARCHAR	cod_trx[2];
+    VARCHAR     nro_lot[4];
+    VARCHAR     fec_rta[10];
+    VARCHAR     caja_aux[5];
+    VARCHAR     fec_cie[8];
+    VARCHAR     fec_vtacard[8];
+
+    double     est03;
+    double     est04;
+EXEC SQL END DECLARE SECTION;
+
+void getFechaActual(char *fecha)
+{
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d/%02d/%02d", newtime->tm_mday, 
+	           newtime->tm_mon+1, newtime->tm_year);
+}
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+	  SqlErrno=sqlca.sqlcode;
+	  return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+
+
+void main (int argc, char *argv[])
+{
+FILE    *fcie, *fd;
+char    fec[15];
+char    filename[30];
+char    szfecha[5];
+char    szcod_tar[3];
+char    sznro_caj_sf[6];
+double  totalcierre;
+double  totalrecha; 
+int     pagina;
+int     cant_suc;
+int     no_suc;
+char    fecha_aux[6];
+
+    double         montocierre;
+    double         montorecha;
+
+
+     init();
+
+     if ((fd=fopen("/online/log/cierre.dat", "r"))==NULL)
+     {
+        printf("Error en apertura de archivo: cierre.dat\n");
+        exit(0);
+     }
+
+     fscanf(fd, "%s", szfecha);
+     printf("Fecha leida: %s\n", szfecha);
+
+     strcpy((char *)fec_cie.arr, szfecha);
+     fec_cie.len=strlen(szfecha);
+
+
+     strcpy(filename, "/online/chec/res/");
+     strcat(filename, "ListCerrado.");
+     strcat(filename, &szfecha[4]);
+
+     if ((fcie=fopen(filename, "w"))==NULL)
+     {
+         printf("Error en apertura de archivo [%s]\n", filename);
+         exit(0);
+     }
+
+     printf("Generando: [%s]\n", filename);
+
+  
+
+     EXEC SQL
+       DECLARE cursor_tar CURSOR FOR
+         SELECT nro_ca, descrip, cod_tar 
+         FROM cred_tarj
+         ORDER BY  cod_tar; 
+
+     EXEC SQL
+         OPEN cursor_tar;  
+
+     EXEC SQL 
+         FETCH cursor_tar
+         INTO :nro_ca, :descrip, :cod_tar;
+         
+ 
+     pagina=0; 
+     while (sqlca.sqlcode==0)
+     { 
+     pagina++;
+
+     cant_suc=0;
+     no_suc=0;
+
+     getFechaActual(fec);
+     fprintf(fcie, "\n\tCOTO C.I.C.S.A.\t\t\t\t\tFECHA : %s\n",fec); 
+     printf("Fecha actual: %s\n", fec);
+     
+
+     fprintf(fcie, "\tPGM: listcerrado    \t\t\t\tPagina:%02d \n",pagina); 
+
+     fprintf(fcie, "\n\n\t TOTALES DE CERRADO POR SUCURSAL"); 
+
+ /*      memset(fecha_aux, '\0', 6);
+       strncpy(fecha_aux, szfecha, 2);
+       strcat(fecha_aux, "/"); */ 
+
+       strcat(fecha_aux, &szfecha[2]);
+       fprintf(fcie, "  TARJETA: %.15s \n", descrip.arr); 
+       fprintf(fcie, "\t\t\tFECHA DE PRESENTACION: %02s/%02s/%04s\n\n\n", 
+               szfecha, &szfecha[2], &szfecha[4]); 
+       printf("\n\n\t\tTARJETA: %s\n", descrip.arr); 
+       fprintf(fcie, "-------------------------------------------------------------------------------\n"); 
+       fprintf(fcie, "Sucursal \t      Fec. Vent.\t    Cerrado\t  Rechazado\n"); 
+       fprintf(fcie, "-------------------------------------------------------------------------------\n\n"); 
+ 
+       EXEC SQL
+       DECLARE cursor_suc CURSOR FOR
+           SELECT nro_caj_sf
+           FROM   cred_suc
+           WHERE  nro_ca=:nro_ca 
+           ORDER BY nro_caj_sf;
+
+       EXEC SQL 
+           OPEN cursor_suc;
+
+       EXEC SQL 
+           FETCH cursor_suc
+           INTO  :nro_caj_sf;
+
+       while (sqlca.sqlcode==0)
+       {
+
+         EXEC SQL
+         DECLARE cursor_fec CURSOR FOR 
+           SELECT fec_vtacard,
+                  sum(decode(cod_est,'04',decode(cod_trx,'00',monto,-monto),0)),
+                  sum(decode(cod_est,'03',decode(cod_trx,'00',monto,-monto),0))
+             FROM cred_trx
+             WHERE nro_caj_sf=:nro_caj_sf  AND
+                   fec_cie=:fec_cie   AND 
+                   cod_tar=:cod_tar 
+             GROUP BY fec_vtacard;  
+
+
+       EXEC SQL
+           OPEN cursor_fec;
+                 
+
+        est04=0;
+        est03=0;
+
+          EXEC SQL
+             FETCH cursor_fec
+               INTO :fec_vtacard, :est04, :est03; 
+
+
+        while (sqlca.sqlcode==0)
+        {
+
+       printf("Salida del FETCH %d \n",sqlca.sqlcode);
+
+       printf("Fec. Vtacard. [%s] \n", fec_vtacard.arr);
+       printf("Estado 04 [%10.2f] \n",est04);
+       printf("Estado 03 [%10.2f] \n",est03);
+
+       montocierre=est04;
+       montorecha=est03;
+ 
+       printf("\n   SUCURSAL: %s   ", nro_caj_sf.arr); 
+
+       fprintf(fcie, "  %s", &nro_caj_sf.arr[2]); 
+       fprintf(fcie, "         \t\t%.2s / %.2s", 
+                          fec_vtacard.arr, &fec_vtacard.arr[2]); 
+       fprintf(fcie, "   \t\t%10.2f",montocierre/100); 
+       fprintf(fcie, "   \t%10.2f\n",montorecha/100 ); 
+
+
+       cant_suc++;                     
+       if ((montorecha==0) &&  (montocierre==0))
+       {
+          no_suc++;
+       } 
+  
+       totalcierre+=montocierre/100;
+       totalrecha+=montorecha/100;
+
+        est04=0;
+        est03=0;
+
+       EXEC SQL 
+            FETCH cursor_fec
+              INTO :fec_vtacard, :est04, :est03;
+     } 
+ 
+     EXEC SQL 
+          CLOSE cursor_fec;
+
+     EXEC SQL 
+           FETCH cursor_suc
+           INTO  :nro_caj_sf;
+
+     }
+
+
+
+     EXEC SQL
+         CLOSE cursor_suc;
+
+       fprintf(fcie, "-------------------------------------------------------------------------------\n"); 
+     fprintf(fcie, "\nTARJETA: %s\n", descrip.arr); 
+     fprintf(fcie, "\n\tTOTAL ");
+     fprintf(fcie, "   \t\t\t%10.2f", totalcierre);
+     fprintf(fcie, "   \t%10.2f\n\n", totalrecha);
+    
+ /*    fprintf(fcie, "\TOTAL DE SUCURSALES PROCESADAS      : %03d\n", cant_suc);
+     fprintf(fcie, "\TOTAL DE SUCURSALES SIN MOVIMIENTOS : %03d\n", no_suc);*/
+
+
+
+    totalcierre=0;
+    totalrecha=0;
+ 
+    EXEC SQL 
+         FETCH cursor_tar
+         INTO :nro_ca, :descrip, :cod_tar;
+    fprintf(fcie, "\n\n\n\n\n\n\n");
+    }
+
+    EXEC SQL 
+       CLOSE cursor_tar;
+    
+    fclose(fcie);
+}
+
+ 
+

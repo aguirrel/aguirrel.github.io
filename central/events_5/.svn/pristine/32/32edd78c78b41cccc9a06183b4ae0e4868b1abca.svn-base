@@ -1,0 +1,1330 @@
+#ifdef OS_Linux
+#pragma pack(1)
+#endif
+
+/*
++-----------------+------------------------------------------------------------+
+| FUENTE          | PriceOn.C                                                  |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Evento de requerimiento de compra online                   |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+#include "Events.h"
+
+extern "C"
+{
+      #include "DBTrxOff.h"
+}
+
+extern CACStatus		CACS;			/* Status Canal X.25            */
+extern Config           Cfg;			/* Objeto de configuracion      */
+extern Log              LogAlarm;		/* Logging de actividades       */
+extern TimeOutQueue		timeout_queue;	/* Cola de timeouts             */
+extern TraceNmbr		TraceNumber;	/* Objeto para el nro de trace  */
+extern TrxHeap			Heap;			/* Objeto Heap                  */
+extern TrxTable			DBTrx;			/* Para tabla de transacciones  */
+extern Queue            SQueue;			/* Cola de Sockets              */
+extern Queue            XQueue;			/* Cola de X.25                 */
+extern Pos              P;				/* Objeto Pos                   */
+extern Log				LogErrTerminal; /* Logging errores terminal     */
+
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | PriceOnLine::PriceOnLine                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Creacion del objeto                                        |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+PriceOnLine::PriceOnLine(int msg_pid, char *msg_data, int data_len)
+{
+    str_price_msg	price_msg_str;
+    event_type=EVENT_PRICEONLINE;
+    orig_pid=msg_pid;
+    memcpy((char *)&price_msg_str, msg_data, sizeof(str_price_msg));
+    mensaje_price=new Price_Msg(price_msg_str);
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | PriceOnLine::~PriceOnLine                                  |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Destruccion del objeto                                     |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+PriceOnLine::~PriceOnLine()
+{
+    delete mensaje_price;
+    delete mensaje_iso;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | PriceOnLine::Armar_y_Enviar_Respuesta                      |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Arma un mensaje de respuesta local en funcion del mensaje  |
+|                 | recibido y datos calculados y lo envia al TPV              | 
++-----------------+------------------------------------------------------------+
+*/
+int PriceOnLine::Armar_y_Enviar_Respuesta(char *szCodRta, struct trxRtaTPV *stRta)
+{
+	Price_Msg		*priceRta;
+	char			szCampo13[LON_CAMPO_13 + 1];
+	char			szMsgStr[2000];
+	int				iLen;
+	int				iRet = 0;
+	char			szCpoTerVer[25+1];
+
+	/* Arma mensaje de respuesta de rechazo hacia el TPV por configuracion erronea */
+	priceRta=new Price_Msg(TYPE_PRICE_VENTA_RTA);
+	
+	/* Completa campos de la respuesta */
+	priceRta->PutField( 1, mensaje_price->GetField( 1));
+	priceRta->PutField( 2, mensaje_price->GetField(15));
+	priceRta->PutField( 3, mensaje_price->GetField(16));
+	priceRta->PutField( 4, mensaje_price->GetField(11));
+	priceRta->PutField( 7, mensaje_price->GetField( 4));
+	priceRta->PutField( 8, mensaje_price->GetField( 5));
+	priceRta->PutField( 9, stRta->szCodAut);
+	priceRta->PutField(10, "");
+	priceRta->PutField(11, stRta->szComerc);
+	priceRta->PutField(15, mensaje_price->GetCodTar());
+	priceRta->PutField(16, "000000000000");
+	sprintf(szCampo13, "%03d%1s%8s%s%s ", atoi(stRta->szNroLot), FLAG_OFFLINE, PINPAD_NULO, stRta->szRespCA, stRta->szPlanSF); 
+	priceRta->PutField(13, szCampo13);
+	priceRta->PutField( 6, szCodRta); 
+
+	/* Devuelve nro de terminal y version */
+	sprintf(szCpoTerVer, FTO_VER, stRta->szTermin, stRta->szProtoc, stRta->szPlnIso, 
+								  NO_ANUL, VERSION_NRO, stRta->szTicOri, stRta->szFecOri );
+	priceRta->PutField(12, szCpoTerVer);
+
+	/* Aplana el mensaje */
+	iLen = priceRta->GetMsgString(szMsgStr);
+
+	/* Borra el mensaje price */
+	delete priceRta;
+
+	/* Envia respuesta al TPV */
+	iRet = SQueue.SendMsg(orig_pid, szMsgStr, iLen);
+	if (iRet != OK)
+	{
+		LogAlarm.Put(0, "PriceOn: ERROR (%d) al enviar respuesta\n", SQueue.GetErrno());
+	}	
+	else
+	{
+		LogAlarm.Put(0, "PriceOn: RESPUESTA LOCAL: %s\n", szCodRta);
+	}
+	return (iRet);
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | PriceOnLine::ProcessIt                                     |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Proceso del objeto                                         |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int PriceOnLine::ProcessIt()
+{
+	str_sel_cadata	term_data;
+	str_heap_data	heap_data;
+	TrxData			trx_data;
+	char			msg_str[2000];
+	char			aux_str[64];
+	char			szNroCta[64];
+	int				cont;
+	int				len;
+	int				ret;
+	int				limite=OK;
+	int				channel_down;
+	int				pos_ocup;
+	int				TrxEnVuelo;
+	str_upd_rev		StrDataRev;
+	char 			CajDevol[6];
+	char 			TrxDevol[5];
+	char 			CajVenta[6];
+	char 			TrxVenta[5];
+	char			FecVenta[7];
+	char			szCampo13[LON_CAMPO_13 + 1];
+	char			szCuotas[32];
+	/* Modificacion PINPAD */
+	char			szPinPad[64];
+	int				iHayPinPad;
+	/* Pinpad 2*/
+	long			lCodProc;
+	long			lCodCuenta;
+	char			szCodiProc[16];
+	int				iTipoOperacion=0;
+	char			NroTrxAux[9];
+	char			szRowId[64];
+	char			szFHtransm[32];
+	char			szFHoperac[32];
+	long			lImpoTran;
+	long			lCashBack;
+        char                    szCriptograma[1024] = {0};
+        char                    szVersionEMV[20] = {0};
+	struct trxRtaTPV stRta;
+	
+	/* Blanquea estructura de respuesta */
+	memset(&stRta, 0, sizeof(stRta));
+	memset(stRta.szCodAut, ' ', sizeof(stRta.szCodAut)-1);
+	memset(stRta.szComerc, ' ', sizeof(stRta.szComerc)-1);
+	memset(stRta.szTermin, ' ', sizeof(stRta.szTermin)-1);
+	memset(stRta.szNroLot, ' ', sizeof(stRta.szNroLot)-1);
+	memset(stRta.szPlnIso, ' ', sizeof(stRta.szPlnIso)-1);
+	memset(stRta.szProtoc, ' ', sizeof(stRta.szProtoc)-1);
+	memset(stRta.szRespCA, ' ', sizeof(stRta.szRespCA)-1);
+	memset(stRta.szFecOri, ' ', sizeof(stRta.szFecOri)-1);
+	memset(stRta.szTicOri, ' ', sizeof(stRta.szTicOri)-1);
+	memset(stRta.szPlanSF, ' ', sizeof(stRta.szPlanSF)-1);
+
+	/* Track II en las IBM no viene el separador de campos '='. Se agrega */
+	char TrackIIprice[40];
+	char * indexTr;
+	strcpy(TrackIIprice,mensaje_price->GetField(10));
+	if ((indexTr=strchr(TrackIIprice,'D'))!=NULL)
+	{
+		*indexTr='='; 
+		mensaje_price->PutField(10,TrackIIprice);
+	}
+	
+	/* Se invierte la fecha de caducidad siempre */
+	mensaje_price->InvertirFecha(); 
+	
+	/* Se loguean los datos de la terminal */
+	LogAlarm.Put(0, "PriceOn: Emp:[%s] Suc:[%s] Ter:[%s] Trx:[%s] Tar:[%s] Plan:[%s]\n", 
+						mensaje_price->GetEmpresa()     , 
+						mensaje_price->GetSucursal()    ,
+						mensaje_price->GetTerminal()    ,
+						mensaje_price->GetTransaccion() ,
+						mensaje_price->GetCodTar()      ,
+						mensaje_price->ObtPlanSf());
+
+	/* Se obtienen los datos de la terminal en base al mensaje price */
+	strcpy(term_data.plan_sf, mensaje_price->ObtPlanSf());
+	strcpy(term_data.cod_tar, mensaje_price->GetCodTar());
+	strcpy(term_data.nro_suc, mensaje_price->GetEmpresa());
+	strcpy(term_data.nro_caj, mensaje_price->GetTerminal());
+
+	/* Obtiene el tipo de operacion ( 01:T_VENT - 02:T_DEVO - 08:T_PAGO - 09:T_DEVP ) */
+	iTipoOperacion = atoi(mensaje_price->GetField(5));
+
+	/* Se buscan los restantes datos de la terminal */
+	ret=getDataByNT2(&term_data);
+	if ( (ret!=OK) || (term_data.caj_bloq==1) )
+	{
+		/* Al dar error, loguea los datos de la terminal mal configurada */
+		if (term_data.caj_bloq==1)
+		{
+			LogAlarm.Put (0, "PriceOn: ERROR Caja bloqueada por cierre anterior fallido\n");
+		}
+		else
+		{
+			LogAlarm.Put (0, "PriceOn: ERROR (%d) al obtener datos de la terminal\n", ret);
+		}
+
+		/* Escribe en el log de errores de terminal */
+		LogErrTerminal.Put(0, "Fecha Hora %s", currentTimeLog() );
+		LogErrTerminal.Put(0, "Caja: %s - Empresa: %s - Tarjeta: %s - Plan: %s - Evento: PriceOn\n\n", 
+								mensaje_price->GetTerminal(),
+								mensaje_price->GetEmpresa(),
+								mensaje_price->GetCodTar(),
+								mensaje_price->ObtPlanSf()); 
+		
+		/* Arma mensaje de respuesta y lo envia al TPV */
+		sprintf(stRta.szRespCA, "102");
+		if ( (iTipoOperacion==T_PAGO) || (iTipoOperacion==T_DEVP) )
+		{
+			Armar_y_Enviar_Respuesta("11", &stRta);
+		}
+		else
+		{
+			Armar_y_Enviar_Respuesta("08", &stRta);
+		}
+		return OK;
+	}
+	
+	/* Se agrega en la cadena del heap el nro_tar original para devolverlo */
+	strcpy(heap_data.nro_tar,mensaje_price->GetField(4));
+	
+	/* Se adapta el mensaje price a la forma de autorizacion */
+	mensaje_price->ConvMsgPrice(atoi(term_data.tip_aut));
+
+	/* Completa la estructura de Trace Number */
+	TraceNumber.SetNroSuc(term_data.nro_suc);
+	TraceNumber.SetNroCaj(term_data.nro_caj);
+	TraceNumber.SetNroCA (term_data.nro_ca );
+	TraceNumber.SetCodConCie(term_data.cod_con_cie);
+	
+	/* Si se esta haciendo un cierre de lote genera la respuesta y se la envia de vuelta al price */
+	if (CACS.IsCierre(atoi(term_data.nro_ca)))
+	{
+		if ((CACS.GetSuc(atoi(term_data.nro_ca))==atoi(term_data.nro_suc)) &&
+			(CACS.GetCaj(atoi(term_data.nro_ca))==atoi(term_data.nro_caj)))
+		{
+			/* Arma mensaje de respuesta y lo envia al TPV */
+			LogAlarm.Put(0, "PriceOn: ERROR. Cierre de lote activo notificando a Price\n");
+			sprintf(stRta.szRespCA, "104");
+			if ( (iTipoOperacion==T_PAGO) || (iTipoOperacion==T_DEVP) )
+			{
+				Armar_y_Enviar_Respuesta("11", &stRta);
+			}
+			else
+			{
+				Armar_y_Enviar_Respuesta("07", &stRta);
+			}
+			return OK;
+		}
+	}
+	
+	/* Completar el mensaje con los datos generados por nosotros	*/
+	if (!strcmp(term_data.uco_seg,"S"))
+	{
+		mensaje_price->SetCodSeg();
+	}
+	else
+	{
+		mensaje_price->SetNoCodSeg();
+	}
+	
+	/* Setea el centro autorizador */
+    mensaje_price->SetNroCAPrice(term_data.nro_ca);
+
+	/* Convierte el mensaje a formato ISO */
+	mensaje_iso=new Iso_Msg();
+	mensaje_iso->SetNroCA8583(term_data.nro_ca);
+	*mensaje_iso=*mensaje_price;
+
+	sprintf(szFHtransm, currentTimestamp());
+	mensaje_iso->PutField(7, szFHtransm);	
+	strcpy(aux_str, TraceNumber);
+	mensaje_iso->PutField(11, aux_str); 	
+	mensaje_iso->PutField(24, term_data.cod_red);	
+	mensaje_iso->PutField(41, term_data.nro_caj_ca);	
+	mensaje_iso->PutField(49, term_data.cod_mon);	
+	trx_data.NroLot(term_data.nro_lot);
+	trx_data.CodMon(term_data.cod_mon);	
+	sprintf(aux_str, "%-15s", term_data.nro_com);
+	mensaje_iso->PutField(42, aux_str);
+
+	/* Si hora operacion mayor a transmision se rechaza */
+	/* Quitar si sincronizan hora los servidores        */
+	switch (DBTipoProtocoloISO(term_data.nro_ca))
+	{
+	case PROT_ISO_AMEX: 
+		memset(szFHoperac, 0, sizeof(szFHoperac));
+		strcpy(szFHoperac, mensaje_iso->GetField(13));
+		strcat(szFHoperac, mensaje_iso->GetField(12));
+		if (strcmp(szFHoperac, szFHtransm)>0)
+		{
+			LogAlarm.Put(0, "PriceOn: ERROR fecha Suc[%s] Ter[%s] Operac[%s] Transm[%s]\n", 
+							mensaje_price->GetSucursal(), mensaje_price->GetTerminal(),
+							szFHoperac, szFHtransm);
+			sprintf(stRta.szRespCA, "109");
+			Armar_y_Enviar_Respuesta("02", &stRta);
+			return OK;	
+		}
+		break;
+	default:
+		break;
+	}
+
+	/* Modificacion PINPAD */
+	iHayPinPad = mensaje_price->UsePinPad();
+	if (iHayPinPad)
+	{
+		/* Arma el codigo de procesamiento */
+		lCodCuenta = atol(mensaje_price->GetField(31));
+		if ( (lCodCuenta != PINPAD_CA_P) && (lCodCuenta != PINPAD_CC_P) &&
+		     (lCodCuenta != PINPAD_CA_D) && (lCodCuenta != PINPAD_CC_D) )
+		{
+			lCodCuenta = PINPAD_CA_P;	/* Caja de ahorro en pesos por defecto */
+		}
+		lCodProc = atol(mensaje_iso->GetField(3)) + lCodCuenta * 1000;
+		sprintf(szCodiProc, "%06d", lCodProc);
+		mensaje_iso->PutField(3, szCodiProc);
+
+		LogAlarm.Put(0, "PriceOn: Codigo de procesamiento PPAD: %s\n", szCodiProc);
+
+		/* Agrega el pinpad al mensaje */
+		memset(szPinPad, 0, sizeof(szPinPad));
+		mensaje_price->GetPinPad(szPinPad);
+		mensaje_iso->PutField(52, szPinPad);
+	}
+	/* Fin manejo PinPad */
+
+	/* Obtiene montos de la operacion */
+	lImpoTran = atol(mensaje_price->GetField( 6));
+	lCashBack = atol(mensaje_price->GetField(32));
+	
+	/* CashBack Visa. Campo 4 = Compra + Retiro */
+	if (lCashBack>0)
+	{
+		switch (term_data.prot_cash[0])
+		{
+		case CASHBACK_VISA: 
+			sprintf(aux_str, "%012ld", lImpoTran+lCashBack);
+			mensaje_iso->PutField(4, aux_str);
+			break;
+		case CASHBACK_POSN:
+			sprintf(aux_str, "%012ld", lImpoTran);
+			break;
+		default:
+			break;
+		}
+		LogAlarm.Put(0, "PriceOn: CashBack. Prot:%c Imp:%ld Ret:%ld Tot:%ld\n", 
+					 term_data.prot_cash[0], lImpoTran, lCashBack, atol(aux_str));
+	}
+	
+	/* Arma los datos de la transaccion para la BD */
+	mensaje_price->GetDBData(trx_data);
+	mensaje_iso->GetDBData(trx_data);
+	sprintf(aux_str,"%02d",M_CEAU);
+	trx_data.ModAut(aux_str);
+	trx_data.CanRet("0000");
+	trx_data.NroCA(term_data.nro_ca);
+	trx_data.NroCajCa(term_data.nro_caj_ca);
+	trx_data.NroCom(term_data.nro_com); 
+	trx_data.NroCuo(mensaje_price->ObtCuotas());
+	trx_data.PlanISO(term_data.plan_iso);
+	trx_data.PlanSF(mensaje_price->ObtPlanSf()); 
+	trx_data.NroRef("");
+
+	/* Pago de resumen */
+	iTipoOperacion = atoi(mensaje_price->GetField(5));
+	switch (iTipoOperacion)
+	{
+	case T_PAGO:
+		sprintf(aux_str, "%02d", T_PAGO);
+		trx_data.CodTrx(aux_str);
+		sprintf(szCodiProc, "%06d", OPCODE_VISA_PAGO_RESUMEN);
+		trx_data.CodPro(szCodiProc);
+		mensaje_iso->PutField(3, szCodiProc);
+		break;
+	case T_DEVP:
+		sprintf(aux_str, "%02d", T_DEVP);
+		trx_data.CodTrx(aux_str);
+		sprintf(szCodiProc, "%06d", OPCODE_VISA_DEVO_RESUMEN);
+		trx_data.CodPro(szCodiProc);
+		mensaje_iso->PutField(3, szCodiProc);
+		break;
+	}
+
+	/* Codigo de procesamiento */
+	if ( (lCashBack>0) && (iTipoOperacion==1) )
+	{
+		lCodProc = 0;
+		switch ( term_data.prot_cash[0] )
+		{
+		case CASHBACK_VISA: 
+			lCodProc = OPCODE_VISA_VEN_CASHBACK;
+			break;
+		case CASHBACK_POSN:
+			lCodProc = (((atol(mensaje_iso->GetField(3))/1000)%10)*1000) + OPCODE_POSN_VEN_CASHBACK;
+			break;
+		}
+		if (lCodProc)
+		{
+			sprintf(szCodiProc, "%06d", lCodProc);
+			mensaje_iso->PutField(3, szCodiProc);
+			trx_data.CodPro(szCodiProc);
+			LogAlarm.Put(0, "PriceOn: Codigo de procesamiento CASH: %s\n", szCodiProc);
+		}
+	}
+	
+	/* Numero de cuenta */
+	memset(szNroCta, 0, sizeof(szNroCta));
+
+	/* Agrega peticion de numero de cuenta */
+	if (strcmp( mensaje_price->GetField(21) , "01") == 0) 
+	{
+		sprintf(aux_str, "%s", CAMPO_NRO_CUENTA);
+		strcat(szNroCta, aux_str);
+	}
+
+	/* Agrega fecha de diferimento (Si no es devolucion) */
+	if (term_data.dias_dif > 0)
+	{
+		char szFechaTrx[32];
+		char szFechaDif[32];
+		sprintf(szFechaTrx,"%04d%4.4s",ObtYear(),trx_data.FecLoc());
+		if( (atoi(trx_data.CodTrx())!=T_DEVO) && (atoi(trx_data.CodTrx())!=T_DEVP) )
+		{
+			if (getFechaDif(szFechaTrx, term_data.dias_dif, szFechaDif)==0)
+			{
+				sprintf(aux_str, "%s%s", CAMPO_FECHA_DIFE, szFechaDif);
+				strcat(szNroCta, aux_str);
+			}
+		}
+	}
+
+	/* Agrega campo 59 */
+	if (strlen(szNroCta)>0)
+	{
+		sprintf(aux_str, "%03d%s", strlen(szNroCta), szNroCta);
+		ret = mensaje_iso->PutField(59, aux_str);
+		LogAlarm.Put(10, "PriceOn: Campo 59:[%s] Ret:[%d]\n", aux_str, ret);
+	}
+
+	strcpy(heap_data.anul_onl,  "0");
+	strcpy(heap_data.plan_iso,  term_data.plan_iso);
+	strcpy(heap_data.nro_com,   term_data.nro_com);
+	strcpy(heap_data.trans_ori, "0000");
+	strcpy(heap_data.fecha_ori, "000000");
+
+	/* Arma el campo cuotas */
+	strcpy(aux_str, mensaje_price->ObtCuotas());
+	
+	/* #37322 Cuotas articulos nacionales */
+	if (term_data.plan_esp > 0) 
+	{
+		sprintf(aux_str, "%03d", term_data.plan_esp);
+	}
+
+	sprintf(szCuotas, "003%1.1s%2.2s",trx_data.PlanISO(), &aux_str[1]);
+	
+	/* Compras AMEX de contado no se envia campo 48 */
+	switch (DBTipoProtocoloISO(term_data.nro_ca))
+	{
+	case PROT_ISO_AMEX: 
+		if (strcmp(szCuotas, "003001")==0) 
+		{
+			memset(szCuotas, 0, sizeof(szCuotas));
+		}
+		break;
+	default:
+		break;
+	}
+
+	/*** Se verifica que sea una devolucion para convertirla en anulacion ***/
+	/*** en caso que la transaccion original se encuentre en la base y    ***/
+	/*** sea de la fecha en curso                                         ***/
+	
+	LogAlarm.Put(8, "PriceOn: Codigo de transaccion:[%s]\n", trx_data.CodTrx());
+	if( (atoi(trx_data.CodTrx())==T_DEVO) || (atoi(trx_data.CodTrx())==T_DEVP) )
+	{
+		/* Obtiene la caja y transaccion  */
+		strcpy(CajDevol,trx_data.NroCaj());
+		strcpy(TrxDevol,trx_data.NroTrx());
+		LogAlarm.Put(0, "PriceOn: Devolucion. CAut:[%s] TerOri:[%s] CajDevol:[%s]\n", term_data.nro_ca, CajDevol, TrxDevol);
+
+		/* Agrega el monto a consulta de anulaciones */
+		trx_data.Monto(mensaje_price->GetField(6));
+		
+		/* Reemplaza caja y transaccion por los de la operacion original */
+		trx_data.NroCaj(mensaje_price->GetField(27));
+		trx_data.NroTrx(mensaje_price->GetField(28));
+
+		/* Obtiene los datos de la operacion */
+		StrDataRev=*(trx_data.GetDataRev());
+		
+		/* Agrega el plan */
+		strcpy(StrDataRev.plan_sf, trx_data.PlanSF());
+
+		/* Actualiza el estado de la transaccion y trae los datos */
+		ret=DBTrx.UpdAnulVenta(&StrDataRev);
+		
+		strcpy(CajVenta,trx_data.NroCaj());
+		strcpy(TrxVenta,trx_data.NroTrx());
+
+		LogAlarm.Put(0, "PriceOn: Actualizacion anulacion venta. Ret:[%d], Errno:[%d]\n",ret,DBTrx.GetErrno());
+		LogAlarm.Put(0, "PriceOn: TerV:[%s], TrxV[%s] TerD:[%s], TrxD[%s]\n", CajVenta, TrxVenta, CajDevol, TrxDevol);
+		
+		/* Devolucion de pago de resumen */
+		if (atoi(trx_data.CodTrx())==T_DEVP)
+		{
+			LogAlarm.Put(0, "PriceOn: Devolucion pago de resumen\n");
+			if ( (ret==1403) || (ret==-1403) )
+			{
+				LogAlarm.Put(0, "PriceOn: No existe original\n");
+				sprintf(stRta.szRespCA, "108");
+				Armar_y_Enviar_Respuesta("02", &stRta);
+				return OK;
+			}
+		}
+		
+		/* Error en la actualizacion */
+		if (ret==NOOK)
+		{
+			LogAlarm.Put(0, "PriceOn: ERROR (%d) al actualizar BD en devolucion\n", DBTrx.GetErrno());
+			if (atoi(trx_data.CodTrx())==T_DEVP)
+			{
+				sprintf(stRta.szRespCA, "107");
+				Armar_y_Enviar_Respuesta("02", &stRta);
+				return OK;
+			}
+		}
+
+		/* La transaccion esta viajando (estado 01) */
+		if (ret==NORTA)
+		{
+			/* Arma mensaje de respuesta y lo envia al TPV */
+			LogAlarm.Put(0, "PriceOn: ERROR al esperar respuesta en devolucion\n");	
+			sprintf(stRta.szRespCA, "101");
+			Armar_y_Enviar_Respuesta("02", &stRta);
+			return OK;
+		} 
+		
+		/* La transaccion original esta pendiente de envio */
+		if (ret==INSANULOFF)
+		{
+			LogAlarm.Put(0, "PriceOn: ANULACION de transaccion original no enviada\n");
+
+			if ( atol(StrDataRev.retiro) > 0 )
+			{
+				LogAlarm.Put(0, "PriceOn: Anulacion offline con cashback no permitida");	
+				sprintf(stRta.szRespCA, "110");
+				Armar_y_Enviar_Respuesta("02", &stRta);
+				return OK;
+			}
+
+			/* Se arma la transaccion */
+			sprintf(aux_str, "%02d", T_OFLI);
+			trx_data.ModEnv(aux_str);
+			sprintf(aux_str, "%02d", M_CRED);
+			trx_data.ModAut(aux_str);
+			trx_data.NroTrc("-1");
+			sprintf(aux_str, "%02d", E_NOAN);
+			trx_data.CodEst(aux_str);
+			trx_data.CodAut(getCodAutLocal(trx_data.CodTar()));
+			sprintf(aux_str, "%04d%4.4s", ObtYear(), trx_data.FecLoc());
+			trx_data.FecTrx(aux_str);
+			trx_data.NroCaj(CajDevol);
+			trx_data.NroTrx(TrxDevol);
+			
+			/* Fecha del dia */
+			memset(FecVenta, 0, sizeof(FecVenta));
+			memcpy(&FecVenta[0], &aux_str[6], 2);
+			memcpy(&FecVenta[2], &aux_str[4], 2);
+			memcpy(&FecVenta[4], &aux_str[2], 2);
+
+			/* Se inserta como venta anulada para no enviar al CA */
+			LogAlarm.Put(0, "PriceOn: Inserta venta anulada (NOEN)\n");
+			ret= DBTrx.Insert(trx_data.GetInsVenData(), szRowId);
+			LogAlarm.Put(0, "PriceOn: Resultado insercion: %d\n", ret);
+			
+			/* Arma mensaje de respuesta y lo envia al TPV */
+			sprintf(stRta.szCodAut, trx_data.CodAut());
+			sprintf(stRta.szTermin, term_data.nro_caj_ca);
+			sprintf(stRta.szComerc, term_data.nro_com);
+			sprintf(stRta.szPlnIso, term_data.plan_iso);
+			sprintf(stRta.szNroLot, term_data.nro_lot);
+			sprintf(stRta.szFecOri, FecVenta);
+			sprintf(stRta.szTicOri, TrxVenta);
+			sprintf(stRta.szPlanSF, term_data.plan_sf);
+			sprintf(stRta.szRespCA, "000");
+			switch (DBTipoProtocoloISO(term_data.nro_ca))
+			{
+			case PROT_ISO_AMEX: 
+				sprintf(stRta.szProtoc, "A");
+				break;
+			default:
+				sprintf(stRta.szProtoc, "B");
+				break;
+			}
+			Armar_y_Enviar_Respuesta("00", &stRta);
+			return OK;
+			
+		} /* end del if INSANULOFF */
+		
+		/**********************/
+		/* ANULACIONES ONLINE */
+		/**********************/
+
+		if (ret==INSANUL)
+		{
+			LogAlarm.Put(0, "PriceOn: Se continua como ANULACION\n");
+
+			/* Continua anulacion si monto cashback es coincidente */
+			if ( atol(StrDataRev.retiro) != atol(trx_data.Retiro()) )
+			{
+				LogAlarm.Put(0, "PriceOn: Difiere monto cashback. VENTA:[%ld] ANULA:[%ld]\n", 
+									atol(StrDataRev.retiro), atol(trx_data.Retiro()));
+				sprintf(stRta.szRespCA, "110");
+				Armar_y_Enviar_Respuesta("02", &stRta);
+				return OK;	
+			}
+
+			/* INSERTA DEVOLUCION */
+			
+			/* Modo de envio "00" */
+			sprintf(aux_str, "%02d", T_ONLI);
+			trx_data.ModEnv(aux_str);
+			
+			/* Modo de autorizacion "10" */
+			sprintf(aux_str, "%02d", M_CRED);
+			trx_data.ModAut(aux_str);
+
+			/* Numero de trace */
+			trx_data.NroTrc("-1");
+
+			/* Codigo de autorizacion */
+			trx_data.CodAut("-1");
+
+			/* Codigo de estado E_ANVE=28 */
+			sprintf(aux_str, "%02d", E_ANVE);
+			trx_data.CodEst(aux_str);
+
+			/* Fecha de transaccion */
+			sprintf(aux_str, "%04d%4.4s", ObtYear(), trx_data.FecLoc());
+			trx_data.FecTrx(aux_str);
+			
+			/* Terminal */
+			trx_data.NroCaj(CajDevol);
+			
+			/* Transaccion */
+			trx_data.NroTrx(TrxDevol);
+			
+			/* Terminal original de venta */
+			trx_data.NroCajOri(CajVenta);
+
+			/* Transaccion original de venta */
+			trx_data.NroTicOri(TrxVenta);
+
+			/* Numero de lote (Caja venta para cerrar) */
+			trx_data.NroLot(term_data.nro_lot);
+
+			/* Codigo de seguridad */
+			trx_data.CodSeg(" ");
+
+			/* Track 1 */
+			/*trx_data.Track1(" ");*/
+
+			/* Track 2 */
+			/*trx_data.Track2(" ");*/
+
+			/* Borra intento de anulacion anterior */
+			DBTrx.DeleteRech(trx_data.GetInsVenData(), E_RECH); /* Estado = '03' */
+ 			LogAlarm.Put(0, "PriceOn: DeleteRech '%02d' : %d\n", E_RECH, DBTrx.GetErrno());
+
+			/* Se inserta devolucion para conciliar */
+			if (DBTrx.Insert(trx_data.GetInsVenData(), szRowId))
+			{
+				LogAlarm.Put(0, "PriceOn: ERROR al insertar devolucion: %d\n", DBTrx.GetErrno());
+				sprintf(stRta.szRespCA, "105");
+				if ( (iTipoOperacion==T_PAGO) || (iTipoOperacion==T_DEVP) )
+				{
+					Armar_y_Enviar_Respuesta("11", &stRta);
+				}
+				else
+				{
+					Armar_y_Enviar_Respuesta("02", &stRta);
+				}
+				return OK;
+			}
+			strcpy(heap_data.rowid, szRowId);
+			LogAlarm.Put(0, "PriceOn: Insert devolucion rowid [%s]: %d\n", szRowId, ret);
+
+			/* TRANSFORMA DEVOLUCION EN ANULACION */
+
+			/* Obtiene datos de la caja de venta */
+			strcpy(term_data.nro_caj, CajVenta);
+			ret=getDataByNT2(&term_data);
+
+			/* Codigo de procesamiento */
+			if ( (lCashBack>0) && (iTipoOperacion==2) )
+			{
+				lCodProc = 0;
+				switch ( term_data.prot_cash[0] )
+				{
+				case CASHBACK_VISA: 
+					lCodProc = OPCODE_VISA_ANU_CASHBACK;
+					break;
+				case CASHBACK_POSN:
+					lCodProc = (((atol(mensaje_iso->GetField(3))/1000)%10)*1000) + OPCODE_POSN_ANU_CASHBACK;
+					break;
+				}
+				if (lCodProc)
+				{
+					sprintf(szCodiProc, "%06d", lCodProc);
+					mensaje_iso->PutField(3, szCodiProc);
+					trx_data.CodPro(szCodiProc);
+				}
+			}
+			else
+			{
+				lCodProc = 20000 + atol(mensaje_iso->GetField(3)) % 10000;
+				sprintf(szCodiProc, "%06d", lCodProc);
+				trx_data.CodPro(szCodiProc);
+			}
+			LogAlarm.Put(0, "PriceOn: Codigo de procesamiento ANUL: %s\n", szCodiProc);
+
+			/* Cambia codigo de transaccion a 05 (Anulacion venta online) */
+			sprintf(aux_str, "%02d", T_ANVE);
+			trx_data.CodTrx(aux_str);
+		
+			/* Modo de envio */
+			sprintf(aux_str, "%02d", T_ANUL);
+			trx_data.ModEnv(aux_str);
+
+			/* Modo de autorizacion */
+			sprintf(aux_str, "%02d", M_CEAU);
+			trx_data.ModAut(aux_str);
+
+			/* Numero de terminal */
+			trx_data.NroCaj(CajVenta);
+		
+			/* Numero de transaccion */
+			trx_data.NroTrx(TrxVenta);
+			
+			/* Numero de lote */
+			trx_data.NroLot(term_data.nro_lot);
+			
+			/* Numero de caja CA */
+			trx_data.NroCajCa(term_data.nro_caj_ca);
+			
+			/* Numero de comercio */
+			trx_data.NroCom(term_data.nro_com); 
+
+			/* Fecha de la transaccion */
+			trx_data.FecLoc(StrDataRev.fec_loc);
+
+			/* Numero de trace */
+			TraceNumber.SetNroSuc(term_data.nro_suc);
+			TraceNumber.SetNroCaj(term_data.nro_caj);
+			TraceNumber.SetNroCA (term_data.nro_ca );
+			TraceNumber.SetCodConCie(term_data.cod_con_cie);
+			strcpy(aux_str, TraceNumber);
+			trx_data.NroTrc(aux_str);
+
+			/* CONVIERTE MENSAJE ISO A ANULACION */
+			
+			/* Campo 3: Codigo de procesamiento */
+			mensaje_iso->PutField(3, trx_data.CodPro());
+
+			/* Campo 11: Numero de Trace */
+			mensaje_iso->PutField(11, trx_data.NroTrc()); 	
+
+			/* Campo 12: Hora local (trx original) */
+			sprintf(aux_str, trx_data.FecLoc());
+			mensaje_iso->PutField(12, &aux_str[4]);
+
+			/* Campo 13: Fecha local (trx original) */
+			sprintf(aux_str, "%4.4s", trx_data.FecLoc());
+			mensaje_iso->PutField(13, aux_str);
+
+			/* Campo 37: Numero referencia anulacion. Se agrega */
+			mensaje_iso->PutField(37, StrDataRev.nro_ref);
+			trx_data.NroRef(StrDataRev.nro_ref);
+
+			/* Campo 38: Codigo de autorizacion */
+			switch (DBTipoProtocoloISO(trx_data.NroCA()))
+			{
+			case PROT_ISO_AMEX:
+				if (strlen(StrDataRev.cod_aut)>0)
+				{
+					mensaje_iso->PutField(38, StrDataRev.cod_aut);
+					trx_data.CodAut(StrDataRev.cod_aut);
+				}
+				break;
+			default:
+				break;
+			}
+
+			/* Campo 41: Numero de caja CA */
+			mensaje_iso->PutField(41, term_data.nro_caj_ca);	
+			
+			/* Campo 42: Numero de comercio CA */
+			sprintf(aux_str, "%-15s", term_data.nro_com);
+			mensaje_iso->PutField(42, aux_str);
+
+			/* Campo 62: Numero de ticket */
+			sprintf(aux_str, "004%04d", atoi(TrxVenta));
+			mensaje_iso->PutField(62, aux_str);
+
+			/* Almacena transaccion de venta */
+			sprintf(NroTrxAux, "%s", TrxVenta);	
+			
+			/* Marca anulacion online SI */
+			strcpy(heap_data.anul_onl, "1");		
+		}
+		else
+		{
+			LogAlarm.Put(0, "PriceOn: Se continua como DEVOLUCION\n");
+
+			/* Continua devolucion solo si monto cashback es cero */
+			if (lCashBack>0)
+			{
+				LogAlarm.Put(0, "PriceOn: Monto cashback no es cero [%ld]\n", lCashBack);
+				sprintf(stRta.szRespCA, "110");
+				Armar_y_Enviar_Respuesta("02", &stRta);
+				return OK;	
+			}
+			
+			/* Marca anulacion online NO */
+			strcpy(heap_data.anul_onl, "0");
+
+			/* Restaura caja y terminal del mensaje */
+			trx_data.NroCaj(CajDevol);
+			sprintf(NroTrxAux, "%s", trx_data.NroTrx());	
+			trx_data.NroTrx(TrxDevol);
+		}
+		
+		/* Arma el campo 48 de plan, transaccion y fecha originales */
+		if(useCampCuot(trx_data.NroCA())==1)
+		{
+			trx_data.NroCajOri(CajVenta);
+			trx_data.NroTicOri(NroTrxAux);
+			DBTrx.SelTrxOrig(&StrDataRev);
+			trx_data.FecOri(StrDataRev.fec_ori);
+			
+			LogAlarm.Put(0, "PriceOn: Datos orig. Fecha:[%s] Trx:[%s]\n", trx_data.FecOri(), trx_data.NroTicOri());
+			if (heap_data.anul_onl[0]=='0') /* Si es devolucion (no es anulacion) */
+			{
+				strcpy(aux_str, mensaje_price->ObtCuotas());
+				
+				/* #37322 Cuotas articulos nacionales */
+				if (term_data.plan_esp > 0)
+				{
+					sprintf(aux_str, "%03d", term_data.plan_esp);
+				}
+				
+				sprintf(szCuotas, "013%1.1s%2.2s%04d%6.6s", 
+						   trx_data.PlanISO(), &aux_str[1], atoi(trx_data.NroTicOri()), trx_data.FecOri()); 
+			}
+		}
+		
+		/* Almacena datos para recuperar con la respuesta */
+		strcpy(heap_data.trans_ori, trx_data.NroTicOri());
+		strcpy(heap_data.fecha_ori, trx_data.FecOri());
+
+	} /* Fin manejo devoluciones */
+
+	// Campo 48: Cuotas
+	if ( strlen(szCuotas) > 0 )
+	{
+		mensaje_iso->PutField(48, szCuotas);
+		LogAlarm.Put(1, "PriceOn: Campo 48 [%s]\n", mensaje_iso->GetField(48));
+	}
+
+        /* EMV */
+        if(strlen(mensaje_price->GetField(34)))
+        {
+            LogAlarm.Put(1, "PriceOn: Mensaje EMV\n");
+            sprintf(szCriptograma, "%03d%s", strlen(mensaje_price->GetField(34)), mensaje_price->GetField(34));
+            mensaje_iso->PutField(55, szCriptograma);
+            sprintf(szVersionEMV, "%02d%s", strlen(mensaje_price->GetField(35)), mensaje_price->GetField(35));
+            mensaje_iso->PutField(60, szVersionEMV);
+            mensaje_iso->PutField(19, "032");
+            mensaje_iso->PutField(59, "01402100010040705");
+            mensaje_iso->PutField(22, "052");
+        }
+
+	/* Verifica si hay transacciones en vuelo */
+	pos_ocup = P.IsPosFree(term_data.nro_ca, term_data.nro_suc, term_data.nro_caj);
+	if (pos_ocup)
+	{
+		TrxEnVuelo=0;
+	}
+	else
+	{
+		TrxEnVuelo=1;
+	}
+
+	/* Verificamos el estado del canal X.25 */
+
+
+	/*  Modificacion: 3/2/98
+	Autor: Rolando Loustric
+	Objetivo: Se utiliza un flag interno para el estado del canal. Este flag
+	es utilizado antes del Insert y para resolver la peticion.
+	Antes se consultaba CACS.IsDown, y en caso de cambiar el 
+	estado del canal en medio del evento se producia un error de 
+	consistencia        */
+	channel_down = CACS.IsDown(atoi(term_data.nro_ca));
+
+	/* Si el canal esta caido o hay transacciones en vuelo */
+	if (channel_down||TrxEnVuelo)
+	{
+		LogAlarm.Put(0, "PriceOn: Centro abajo [%d] Trx en vuelo [%d]. Autoriza localmente. CAut [%s]\n", 
+									channel_down, TrxEnVuelo, term_data.nro_ca);
+		if (iTipoOperacion != T_PAGO)		
+		{
+			/* Intenta aprobar localmente */
+			
+			str_get_total	opers_data;
+			str_get_limit	limit_data;
+			
+			/* Obtiene el numero de tarjeta */
+			strcpy(aux_str, mensaje_price->GetField(4));
+			for (cont=0; cont<strlen(aux_str); cont++)
+			{
+				if (aux_str[cont]==' ')
+				{
+					aux_str[cont]='\0';
+				}
+			}
+		
+			/* Carga datos para consultar los totales de la tarjeta */
+			sprintf(opers_data.nro_tar, "%-*s", sizeof(opers_data.nro_tar)-1, aux_str);
+			sprintf(opers_data.cod_est, "%0*d", sizeof(opers_data.cod_est)-1, E_PEND);
+			strcpy(opers_data.cod_tar, term_data.cod_tar);
+			strcpy(opers_data.plan_sf, term_data.plan_sf);
+			strcpy(opers_data.cod_trx, trx_data.CodTrx());
+		
+			/* Carga datos para obtener los limites de respaldo del tipo de tarjeta y plan */
+			strncpy(limit_data.cod_tar, mensaje_price->GetCodTar(), sizeof(limit_data.cod_tar));
+			strncpy(limit_data.plan_sf,	mensaje_price->ObtPlanSf(),	sizeof(limit_data.plan_sf));
+	
+			/* Obtiene los limites de respaldo del tipo de tarjeta */
+			ret=getLimit(&limit_data);
+			if (ret!=OK)
+			{
+				LogAlarm.Put(0, "PriceOn: ERROR (%d) al obtener el limite de tarjeta\n", ret);
+				return NOOK;
+			}
+			
+			LogAlarm.Put(0, "PriceOn: Limites. General:%.2f - Cuotas:%.2f - Plan %s:%.2f\n", 
+						(double)limit_data.limite/100.0 , (double)limit_data.limcuot/100.0 ,
+						limit_data.plan_sf, (double)limit_data.limplan/100.0 );
+		
+			/* Obtiene el total comprado con la tarjeta */
+			ret=getTotalGeneral(&opers_data);
+			if (ret!=OK)
+			{
+				LogAlarm.Put(0, "PriceOn: ERROR (%d) al obtener total de tarjeta!!\n",	ret);
+				return NOOK;
+			}
+			LogAlarm.Put(0, "PriceOn: Total de la tarjeta: %.2f\n", (double)opers_data.monto/100);
+		
+			/* Cambia el modo de la operacion a OFF-LINE */
+			sprintf(aux_str, "%02d", T_OFLI); 
+			trx_data.ModEnv(aux_str);
+
+			/* Cambia el modo de ingreso */
+			switch (DBTipoProtocoloISO(trx_data.NroCA()))
+			{
+			case PROT_ISO_AMEX:
+				if (strcmp(trx_data.ModIng(), "072")==0)
+				{
+					trx_data.ModIng("012");
+				}
+				if (strcmp(trx_data.ModIng(), "062")==0)
+				{
+					trx_data.ModIng("022");
+				}
+				break;
+			default:
+				break;
+			}
+
+			/* Pone el modo de autorizacion por Credito */
+			sprintf(aux_str, "%02d", M_CRED);
+			trx_data.ModAut(aux_str);
+				
+			/* Pone el numero de trace (NULL) */
+			trx_data.NroTrc("-1");
+			
+			if (heap_data.anul_onl[0]=='1')
+			{
+				LogAlarm.Put(0, "PriceOn: Anulacion offline no permitida\n");
+				sprintf(aux_str, "%02d", E_RECH);
+				trx_data.CodEst(aux_str);
+				limite=NOOK;
+			}
+			else
+			{
+				/* Obtiene el monto de la transaccion en curso */
+				long monto;
+				monto=atol(mensaje_price->GetField(6));
+				LogAlarm.Put(0, "PriceOn: Esta operacion: %.2f\n", (double)monto/100);
+				LogAlarm.Put(0, "PriceOn: Total general de la tarjeta: %.2f\n", (double)opers_data.monto/100.0);
+			
+				/* Si las compras realizadas anteriormente mas la actual supera el limite */
+				if ((opers_data.monto+monto)>limit_data.limite)
+				{
+					/* Se prepara el estado para registrar la operacion como rechazada */
+					LogAlarm.Put(0, "PriceOn: Supera el limite\n");
+					limite=NOOK;
+					sprintf(aux_str, "%02d", E_RECH);
+					trx_data.CodEst(aux_str);
+				}
+				else
+				{
+					/* Si el plan es en cuotas */
+					if (strncmp(term_data.plan_sf, "00", 2) != 0)
+					{
+						/* Obtiene el total comprado en cuotas */
+						ret= getTotalCuotas(&opers_data);
+						if (ret!=OK)
+						{
+							LogAlarm.Put(0, "PriceOn: ERROR (%d) al obtener el total de la tarjeta en cuotas\n",ret);
+							return NOOK;
+						}
+						LogAlarm.Put(0, "PriceOn: Total de la tarjeta en cuotas: %.2f\n", (double)opers_data.monto/100.0);
+						
+						/* Si las compras realizadas anteriormente en cuotas mas la actual supera el limite */		
+						if ((opers_data.monto+monto)>limit_data.limcuot)
+						{
+							limite=NOOK;
+						}
+						else
+						{
+							/* Obtiene el total comprado en cuotas para ese plan */
+							ret= getTotalPlan(&opers_data);
+							if (ret!=OK)
+							{
+								LogAlarm.Put(0, "PriceOn: ERROR (%d) al obtener el total de tarjeta para el plan\n",ret);
+								return NOOK;
+							}
+							LogAlarm.Put(0, "PriceOn: Total de la tarjeta para el plan: %.2f\n", (double)opers_data.monto/100.0);
+
+							/* Si las compras realizadas anteriormente para el plan mas la actual supera el limite */			
+							if ((opers_data.monto+monto)>limit_data.limplan)
+							{
+								limite=NOOK;
+							}
+							else
+							{
+								limite=OK;
+							}           
+						}
+					}
+					else
+					{
+						limite=OK;
+					}
+				
+					/* Si la tarjeta tiene limite de respaldo para operrar offline */
+					if (limite==OK)
+					{	
+						LogAlarm.Put(0, "PriceOn: No supera el limite\n");
+						sprintf(aux_str, "%02d", E_PEND);
+						trx_data.CodEst(aux_str);
+						/*Modificacion: Codigo de autorizacion local*/
+						/*configurable [28-12-2000][DL]*/
+						sprintf(aux_str, "%s", getCodAutLocal(trx_data.CodTar()));
+						trx_data.CodAut(aux_str);
+					}
+					else
+					{
+						LogAlarm.Put(0, "PriceOn: Supera el limite\n");
+						sprintf(aux_str, "%02d", E_RECH);
+						trx_data.CodEst(aux_str);
+					}
+				}
+			}
+		}		
+		else /* iTipoOperacion == T_PAGO */
+		{
+			/* No se permite pago de resumen offline en cuotas */
+			if (strncmp(term_data.plan_sf, "00", 2) != 0)
+			{
+				LogAlarm.Put(0, "PriceOn: Pago de resumen offline en cuotas no permitido\n");
+				sprintf(aux_str, "%02d", E_RECH);
+				trx_data.CodEst(aux_str);
+				limite=NOOK;
+			}
+			else
+			{
+				/* Cambia el modo de la operacion a OFF-LINE */
+				sprintf(aux_str, "%02d", T_OFLI); 
+				trx_data.ModEnv(aux_str);
+
+				/* Cambia el modo de ingreso */
+				switch (DBTipoProtocoloISO(trx_data.NroCA()))
+				{
+				case PROT_ISO_AMEX:
+					if (strcmp(trx_data.ModIng(), "072")==0)
+					{
+						trx_data.ModIng("012");
+					}
+					if (strcmp(trx_data.ModIng(), "062")==0)
+					{
+						trx_data.ModIng("022");
+					}
+					break;
+				default:
+					break;
+				}
+
+				/* Pone el modo de autorizacion por Credito */
+				sprintf(aux_str, "%02d", M_CRED);
+				trx_data.ModAut(aux_str);
+					
+				/* Pone el numero de trace (NULL) */
+				trx_data.NroTrc("-1");
+
+				/* Pone el codigo de autorizacion */
+				sprintf(aux_str, "%s", getCodAutLocal(trx_data.CodTar()));
+				trx_data.CodAut(aux_str);
+				
+				/* Pone el codigo de estado */
+				sprintf(aux_str, "%02d", E_PEND);
+				trx_data.CodEst(aux_str);		
+
+				/* Acepta siempre el pago offline */
+				limite = OK;
+			}
+		}
+	} 
+	else
+	{
+		/* Si no esta caido el canal X.25 se cambia al estado de enviado */
+		sprintf(aux_str, "%02d", E_ENVI);
+		trx_data.CodEst(aux_str);
+		if (heap_data.anul_onl[0]!='1') /* Si no es anulacion */
+		{
+			trx_data.CodAut("");
+		}
+		TraceNumber.Inc();
+	}
+
+	/* Carga la fecha de la trx */
+	sprintf(aux_str,"%04s%4.4s", trx_data.AnoTrx(), trx_data.FecLoc());
+	trx_data.FecTrx(aux_str);
+
+	/* Las transacciones rechazadas localmente no se graban en la BD */
+	if (atoi(trx_data.CodEst())!=E_RECH)
+	{
+		LogAlarm.Put(0, "PriceOn: Inserta anulacion. nro_ref[%s] cod_aut[%s]\n", trx_data.NroRef(), trx_data.CodAut());
+		ret=DBTrx.Insert(trx_data.GetInsVenData(), szRowId);
+	}
+	else
+	{
+		/* Inserta anulacion rechazada para control */
+		if (heap_data.anul_onl[0]=='1')
+		{
+			ret=DBTrx.Insert(trx_data.GetInsVenData(), szRowId);
+			LogAlarm.Put(0, "PriceOn: Inserta anulacion rechazada [%d]\n", DBTrx.GetErrno());
+		}
+		ret=OK;
+	}
+
+	/* Cuando se produce un error en el insert verifica existencia de */
+	/* rechazadas, en caso de esto ser cierto las borra para permitir */
+	/* el nuevo pedido de autorizacion.                               */
+	if (ret==NOOK)
+	{
+		int testRech=0;   /* Testing de variables rechazadas */
+		
+		testRech=DBTrx.DeleteRech(trx_data.GetInsVenData(), E_RECH); /* Estado = '03' */
+		if (testRech==OK)
+		{
+			LogAlarm.Put(0, "PriceOn: Intento de Reautorizar Trx: [%s] ya rechazada\n", mensaje_price->GetField(11));
+			ret=DBTrx.Insert(trx_data.GetInsVenData(), szRowId);
+		}
+		if ((testRech==OK && ret==NOOK) || testRech==NOOK)
+		{
+			LogAlarm.Put(0, "PriceOn: ERROR (%d) en %s!!\n", 
+								DBTrx.GetErrno(),	testRech==OK ? "REINSERT" : "Insert Original");
+			sprintf(stRta.szRespCA, "105");
+			if ( (iTipoOperacion==T_PAGO) || (iTipoOperacion==T_DEVP) )
+			{
+				Armar_y_Enviar_Respuesta("11", &stRta);
+			}
+			else
+			{
+				Armar_y_Enviar_Respuesta("02", &stRta);
+			}
+			return NOOK;
+		}
+	}
+
+	/* Verificamos el estado del canal X.25                  */
+	/* Si esta caido, generamos la respuesta y la devolvemos */
+	if (channel_down||TrxEnVuelo)
+	{ 
+		/* Arma mensaje de respuesta y lo envia al TPV */
+		if (limite==OK)
+		{
+			sprintf(stRta.szCodAut, getCodAutLocal(trx_data.CodTar()));
+			sprintf(stRta.szTermin, term_data.nro_caj_ca);
+			sprintf(stRta.szComerc, term_data.nro_com);
+			sprintf(stRta.szPlnIso, term_data.plan_iso);
+			sprintf(stRta.szNroLot, term_data.nro_lot);
+			sprintf(stRta.szFecOri, trx_data.FecOri());
+			sprintf(stRta.szTicOri, trx_data.NroTicOri());
+			sprintf(stRta.szPlanSF, term_data.plan_sf);
+			sprintf(stRta.szRespCA, "000");
+			switch (DBTipoProtocoloISO(term_data.nro_ca))
+			{
+			case PROT_ISO_AMEX:	
+				sprintf(stRta.szProtoc, "A");
+				break;
+			default:
+				sprintf(stRta.szProtoc, "B"); 
+				break;
+			}
+			Armar_y_Enviar_Respuesta("00", &stRta);
+		}
+		else
+		{
+			sprintf(stRta.szRespCA, "103");
+			if ( (atoi(trx_data.CodTrx())==T_PAGO) || (atoi(trx_data.CodTrx())==T_DEVP) )
+			{
+				Armar_y_Enviar_Respuesta("11", &stRta);
+			}
+			else
+			{
+				Armar_y_Enviar_Respuesta("38", &stRta);
+			}
+		}
+		return OK;
+	}
+	else /* El vinculo esta activo */
+	{	
+		/* Arma los datos para el heap */
+		mensaje_price->GetHeapData(&heap_data);
+		if (heap_data.anul_onl[0]=='1')
+		{
+			strcpy(heap_data.nro_term,  CajVenta);
+			strcpy(heap_data.nro_trans, TrxVenta);
+		}
+		
+		strcpy(heap_data.plan_sf,   term_data.plan_sf);
+		strcpy(heap_data.nro_caj_ca,term_data.nro_caj_ca);
+		heap_data.orig_pid=orig_pid;
+		
+		char idHeap[20];
+		/* Arma clave para el heap */
+		sprintf(idHeap,"%2.2s%3.3s%5.5s%8.8s", 
+							term_data.nro_ca, term_data.nro_suc, term_data.nro_caj, mensaje_iso->GetField(11));
+		
+		/* Pone los datos en el heap */
+		LogAlarm.Put(95, "PriceOn: idHeap [%s] \n", idHeap);		
+		LogAlarm.Put(95, "PriceOn: anul_onl[%s] plan_iso[%s] plan_sf[%s] nro_com[%s]\n", 
+							heap_data.anul_onl, heap_data.plan_iso, heap_data.plan_sf, heap_data.nro_com);		
+		//LogAlarm.Put(0,  "PriceOn: heap_data.rowid [%s] \n", heap_data.rowid);		
+		ret=Heap.PutData(idHeap,(char *)&heap_data, sizeof(heap_data));	
+		if (ret==NOOK)
+		{
+			LogAlarm.Put(0, "PriceOn: ERROR (%d) al poner info en Heap\n", Heap.GetErrno());		
+			return NOOK;
+		}
+		
+		/* Registrar en la TimeoutQueue		*/
+		Cfg.GetItem("TimeOutDaemon", "MsgTimeOut1", aux_str);	
+		ret=timeout_queue.SetTimeOut(idHeap,atoi(aux_str), GetType(), "");
+		if (ret==NOOK)
+		{
+			LogAlarm.Put(0, "PriceOn: ERROR (%d) al agregar a TimeOutQueue!!\n", timeout_queue.GetErrno());			
+			return NOOK;
+		}
+		
+		/* Aplana el mensaje */
+		memset(msg_str,'\0',sizeof(msg_str));
+		len=mensaje_iso->GetMsgString(msg_str);
+
+		/* Envia el mensaje al CA */
+		LogAlarm.Put(0, "PriceOn: Envia a X.25. CAut [%s]\n", term_data.nro_ca);
+		ret=XQueue.SendMsg(atoi(term_data.nro_ca)+1, msg_str, len);
+		if (ret==OK)
+		{
+			/* Bloquea la caja */
+			ret = P.SetPosBusy(term_data.nro_ca, term_data.nro_suc, term_data.nro_caj);
+			if (ret!=OK)
+			{
+				LogAlarm.Put(0, "PriceOn: No se pudo bloquear la caja!!\n");
+			}
+			LogAlarm.Put(2, "PriceOn: Respuesta enviada OK\n");
+		}
+		else 
+		{
+			LogAlarm.Put(0, "PriceOn: ERROR al enviar a X25\n");
+			return NOOK;
+		} 
+	}
+	return OK;
+}

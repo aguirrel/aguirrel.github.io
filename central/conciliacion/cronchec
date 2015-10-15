@@ -1,0 +1,40 @@
+
+ORACLE_SID=ONLINE
+ORACLE_HOME=/u01/app/oracle/product/734
+EDITOR=vi
+PATH=/usr/bin:/etc:/usr/sbin:/usr/ucb:/usr/bin/X11:/sbin:$ORACLE_HOME/bin
+
+export PATH
+export EDITOR
+export ORACLE_HOME
+export ORACLE_SID
+
+var=`cat /online/log/fecha.dat`
+
+fec=`date`
+echo "Comenzando proceso $fec" > /online/log/checker.log
+
+echo "Creando indices" >> /online/log/checker.log
+
+#cd /online/sql
+#sqlplus u601/u601 @/online/sql/indchec.sql
+#cd -
+
+echo "Resultado " $? >> /online/log/checker.log
+
+for i in `cat /online/chec/equipos`
+do
+cd /online/chec/$i
+date >> /online/log/checker.log
+echo $i >> /online/log/checker.log
+/online/bin/checker vtacard.$var >> /online/log/checker.log
+done
+
+echo "Proceso finalizado $fec" >> /online/log/checker.log
+echo "Borrando indices" >> /online/log/checker.log
+
+#cd /online/sql
+#sqlplus u601/u601 @/online/sql/dropindchec.sql
+#cd - 
+
+echo "Resultado " $? >> /online/log/checker.log

@@ -1,0 +1,131 @@
+#definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+#Distintas versiones de ORACLE
+ORACLE_HOME=/u01/app/oracle/product/7.3.2
+#ORACLE_HOME=/home/oracle
+
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+CC=xlc
+CCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+CCC=xlC
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+PCC=proc
+PCCINC=${ORACLE_HOME}/proc/lib
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no userid=u601/u601 lines=yes ireclen=132
+
+PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=syntax userid=u601/u601 lines=yes ireclen=132
+
+
+# Librerias de la base de datos relacional (ORACLE):
+ORACLELIBS= -lcore -lcv6 -lnlsrtl -lserver -lsql -lsqlnet -L${ORACLE_HOME}/lib ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp
+
+# Librerias propias
+USRLIBS= -L$(LFILES) -ldatabase
+
+# Librerias del sistema
+SYSLIBS= -lc -lm -lld /lib/crt0.o
+
+ALLIBS=$(USRLIBS) $(SYSLIBS) $(LIBS)
+
+#Existen tres versiones de librerias de ORACLE
+
+# ORACLE 7.2 (aix 3.2.5)
+#LIBS=-L./mensajes -L./eventos -L$(LFILES) -lmsgs -levents -ldatabase \
+#     -lcore -lcv6 -lnlsrtl -lora -lsql -lsqlnet -L${ORACLE_HOME}/lib \
+#     ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp -lc -lm -lld /lib/crt0.o -lbsd
+
+# ORACLE 7.2 (aix 4.1.4)
+#LIBS=-L${ORACLE_HOME}/lib -lsql ${ORACLE_HOME}/lib/osntab.o -lsqlnet -lora -lora -lnlsrtl3 -lc3v6 -lcore3 -lnlsrtl3 -lcore3 -lm -lld -lm -lm -lld -lm
+
+#ORACLE 7.3.2.3 (aix 4.1.4)
+LIBS= -L${ORACLE_HOME}/lib -lcore3 -lc3v6 -lnlsrtl3 -lserver -lgeneric -lcommon -lsqlnet -lncr -lepc -lsql -lclient
+
+.SUFFIXES: .pc
+
+.pc.o:
+	$(PCC) $(PCCFLG) iname=$<
+	$(CC) $(CCFLG) -c $*.c
+	@rm $*.c
+
+.C.o:
+#	$(CCC) $(CCCFLG) -c -DTERMTABLE_CLASS_TEST $<
+	$(CCC) $(CCCFLG) -c $<
+
+all: listpend
+
+clean:
+	-rm *.o *.a *.c
+
+$(EFILES)depuracion: $(OFILES)depuracion.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)depuracion.o \
+                                 -o $(EFILES)depuracion
+
+$(OFILES)depuracion.o: depuracion.pc 
+	$(PCC) $(PCCFLG) iname=depuracion.pc
+	$(CC) $(CCFLG) -o$(OFILES)depuracion.o -c depuracion.c 
+	@rm depuracion.c
+
+
+$(EFILES)c: $(OFILES)c.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)c.o \
+                                 -o $(EFILES)c
+
+$(OFILES)c.o: c.pc 
+	$(PCC) $(PCCFLG) iname=c.pc
+	$(CC) $(CCFLG) -o$(OFILES)c.o -c c.c 
+	@rm c.c
+
+listpend: $(OFILES)listpend.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)listpend.o \
+                                 -o $(EFILES)listpend
+
+$(OFILES)listpend.o: listpend.pc 
+	$(PCC) $(PCCFLG) iname=listpend.pc
+	$(CC) $(CCFLG) -o$(OFILES)listpend.o -c listpend.c 
+	@rm listpend.c
+
+
+termdev: $(OFILES)termdev.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)termdev.o \
+                                 -o $(EFILES)termdev
+
+$(OFILES)termdev.o: termdev.pc 
+	$(PCC) $(PCCFLG) iname=termdev.pc
+	$(CC) $(CCFLG) -o$(OFILES)termdev.o -c termdev.c 
+	@rm termdev.c
+
+chec_back: $(OFILES)chec_back.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)chec_back.o \
+                                 -o $(EFILES)chec_back
+
+$(OFILES)chec_back.o: chec_back.pc 
+	$(PCC) $(PCCFLG) iname=chec_back.pc
+	$(CC) $(CCFLG) -o$(OFILES)chec_back.o -c chec_back.c 
+	@rm chec_back.c
+
+checker: $(OFILES)checker.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)checker.o \
+                                 -o $(EFILES)checker
+
+$(OFILES)checker.o: checker.pc 
+	$(PCC) $(PCCFLG) iname=checker.pc
+	$(CC) $(CCFLG) -o$(OFILES)checker.o -c checker.c 
+	@rm checker.c
+
+
+trxpend: $(OFILES)trxpend.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)trxpend.o \
+                                 -o $(EFILES)trxpend
+
+$(OFILES)trxpend.o: trxpend.pc 
+	$(PCC) $(PCCFLG) iname=trxpend.pc
+	$(CC) $(CCFLG) -o$(OFILES)trxpend.o -c trxpend.c 
+	@rm trxpend.c
+

@@ -1,0 +1,54 @@
+#***********************************************************************
+#*                                                                     *
+#*               Script de Conciliacion de ventas                      *
+#*                                                                     *
+#***********************************************************************
+#* Ultima modificacion : 15-JAN-2000                                   *
+#***********************************************************************
+
+log=/online/log/controles.log
+
+	#/online/bin/veovta
+	#ex_sta=$?
+	#if [ "$ex_sta" != "0" ]
+	#then
+	#   exit
+	#fi
+
+echo " " |tee -a $log  
+echo "Inicio del proceso..." `date +"%d/%m/%Y %H:%M:%S"` |tee -a $log
+who am i >> $log
+
+echo " " |tee -a $log  
+echo "Se generan los list de vtas...(CHECKER)" `date +"%H:%M:%S" `|tee -a  $log
+cronchec   
+echo "Termino CHECKER." `date +"%H:%M:%S"` |tee -a $log     
+
+echo "Se insertan trx. pendientes...(PROCPEN)" `date +"%H:%M:%S" `|tee -a  $log
+cronprocpend   
+echo "Termino PROCPEND." `date +"%H:%M:%S" ` |tee -a $log
+
+echo "Se carga la tabla VTACARD..." `date +"%H:%M:%S"` |tee -a $log
+cd /online/chec/control
+cargavta2
+cd -
+echo "Termino de cargarse la tabla VTACARD." `date +"%H:%M:%S"` |tee  -a $log
+
+echo "Se corre el CHEC2..." `date +"%H:%M:%S"` |tee -a $log
+cd /online/chec/control
+chec2
+cd -
+echo "Termino de correr el CHEC2." `date +"%H:%M:%S"`|tee  -a $log
+
+echo "Se cargan la tablas VTATOT y SUCVTATOT..." `date +"%H:%M:%S"` |tee -a $log
+/online/bin/cargatot
+echo "Terminaron de cargarse las tablas." `date +"%H:%M:%S"` |tee  -a $log
+
+
+echo " "
+echo " " >> $log  
+echo "Finalizacion del Proceso." `date +"%d/%m/%Y %H:%M:%S"` >> $log
+echo "Finalizacion del Proceso." `date +"%d/%m/%Y %H:%M:%S"` 
+echo " " >> $log 
+
+#FIN DEL PROCESO 

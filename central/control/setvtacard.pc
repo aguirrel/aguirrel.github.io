@@ -1,0 +1,170 @@
+/*************************************************************************/
+/*                                                                       */
+/* setvtacard       : setea el campo fec_vtacard de cred_trx             */
+/*                                                                       */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 29/07/98                                           */
+/* Compilador       : Pro*C/C++                                          */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+
+#define BOOL char
+#define TRUE 1
+#define FALSE 0
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+    VARCHAR     Fecha[4];
+    VARCHAR	monto[12];
+    VARCHAR     nro_tar[20];
+    VARCHAR     fec_vtacard[4];
+
+EXEC SQL END DECLARE SECTION;
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+
+void ShowSyntax(char* szProgramName)
+{
+    printf("\n\nUso: %s <MMDD> <9..> <9..> <DDMM>\n\n", szProgramName);
+    printf("<MMDD> : fec_loc - Fecha\n");
+    printf("<9..>  : monto\n");
+    printf("<9..>  : nro_tar - Numero de tarjeta\n");
+    printf("<DDMM> : fec_vtacard\n\n");
+    exit(-1);
+}
+
+void main (int argc, char *argv[])
+{
+  FILE *fd;
+  time_t  hIni;
+  long nCont = 0;
+  BOOL bPreguntar = FALSE;
+  BOOL bUsarSegundaFecha = FALSE;
+  int  iConfirma;
+
+  if( argc < 5 )
+	ShowSyntax(argv[0]);
+
+  printf("\nApertura del archivo setvtacard.log\n");
+  if ( (fd=fopen("/online/log/setvtacard.log", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura del archivo setvtacard.log\n");
+    exit(-1);
+  }
+
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+
+   hIni=time(&hIni);
+   printf("\nInicio: %s\n", asctime(localtime(&hIni)) );
+   fprintf(fd, "\nInicio: %s\n", asctime(localtime(&hIni)) );
+
+
+  strcpy( (char*) Fecha.arr, argv[1]);
+  Fecha.len = strlen( (char*) Fecha.arr);
+
+  strcpy( (char*) monto.arr, argv[2]);
+  monto.len = strlen( (char*) monto.arr );
+
+  strcpy( (char*) nro_tar.arr, argv[3]);
+  nro_tar.len = strlen( (char*) nro_tar.arr);
+
+  strcpy( (char*) fec_vtacard.arr, argv[4]);
+  fec_vtacard.len = strlen( (char*) fec_vtacard.arr );
+ 
+
+  printf("\nComienza proceso de actualizacion...\n");
+  fprintf(fd, "\nComienza proceso de actualizacion...\n");
+
+
+
+  EXEC SQL
+     UPDATE cred_trx
+	SET fec_vtacard = :fec_vtacard     
+      WHERE ltrim(rtrim(substr(fec_loc,1,4))) = :Fecha 
+	AND ltrim(rtrim(monto))   = :monto
+	AND ltrim(rtrim(nro_tar)) = :nro_tar
+	AND fec_vtacard IS NULL;
+
+  EXEC SQL
+      COMMIT;
+
+
+  printf("\nsqlca.sqlcode : %i\n", sqlca.sqlcode);     
+  printf("\n\nSaliendo del programa...\n\n");
+  fprintf(fd, "\n\nSaliendo del programa...\n\n");
+  hIni=time(&hIni);
+  printf("\nFin: %s\n", asctime(localtime(&hIni)) );
+  fprintf(fd, "\nFin: %s\n", asctime(localtime(&hIni)) );
+  fclose(fd);
+}
+

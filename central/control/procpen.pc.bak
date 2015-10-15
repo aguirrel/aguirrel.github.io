@@ -1,0 +1,628 @@
+/************************************************************************/
+/*									*/
+/* procpen.pc	    : Funcion para pasar las trxs del pending.out	*/
+/*		      a la tabla de credito cred_trx.            	*/
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 22/05/97						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*                                                                      */
+/************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+ 
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+extern int	SqlErrno;
+
+struct trx 
+{
+char nro_caj[6];
+char nro_caj_ori[6];
+char nro_trx[5];
+char tip_tar[10];
+char cod_tar[3];
+char nro_tar[21];
+char cod_aut[9];
+char monto[15];
+char fecha[7];
+char hora[5];
+char plansf[3];
+char cuotas[4];
+char cod_resoluc[3];
+char fec_vtacard[5];
+};
+
+struct trx TrxRead;
+
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+     
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_caj_ori[5];
+    VARCHAR     nro_caj_ca[8];
+    VARCHAR     nro_trx[4];
+    VARCHAR     mod_env[2];
+    VARCHAR     cod_tar[2];
+    VARCHAR     nro_ca[2];
+    VARCHAR     cod_trx[2];
+    VARCHAR     cod_est[2];
+    VARCHAR     can_ret[4];
+    VARCHAR     nro_lot[3];
+    VARCHAR     cod_pro[6];
+    VARCHAR     monto[12];
+    VARCHAR     nro_tar[20];
+    VARCHAR     nro_trc[6];
+    VARCHAR     fec_loc[10];
+    VARCHAR     fec_ven[4]; 
+    VARCHAR     mod_ing[3];
+    VARCHAR     nro_tic[4]; 
+    VARCHAR     nro_caj_sf[5]; 
+    VARCHAR     nro_caj_fic[5]; 
+    VARCHAR     cod_aut[6]; 
+    VARCHAR     fec_vtacard[4]; 
+    VARCHAR     nro_com[15]; 
+    VARCHAR     plan_iso[1]; 
+    VARCHAR     plan_sf[2]; 
+    VARCHAR     nro_cuo[3]; 
+    VARCHAR     cod_mon[3]; 
+    VARCHAR     cod_con_cie[1]; 
+    VARCHAR     cod_con_cie_com[1]; 
+     
+EXEC SQL END DECLARE SECTION;
+
+
+void getFechaActual(char *fecha)
+{
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d%02d%02d", newtime->tm_hour,
+	           newtime->tm_min, newtime->tm_sec);
+}
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+	  SqlErrno=sqlca.sqlcode;
+	  return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+
+void main (int argc, char *argv[])
+{
+char buffer[256];
+FILE *fd;
+FILE *fdfec;
+FILE *salida;
+int  procesa;
+char suc[6];
+char szfecha[5];
+char fec[23];
+double aux;
+double aux2;
+char szmonto[13];
+char filename[100];
+char filelog[100];
+char szfec_loc[11];
+char sznro_trc[7];
+int lnro_trc;
+char nro_tar_aux[16];
+time_t hIni;
+
+
+  init();
+
+  printf("Apertura de archivo fecha.dat\n");
+  if ((fdfec=fopen("/online/log/fecha.dat", "r"))==NULL)
+      {
+        printf ("\nError: Apertura de archivo fecha.dat\n");
+        exit(1);
+      }
+
+  fscanf(fdfec, "%s", szfecha);
+  printf("Fecha leida de fecha.dat: [%s]\n", szfecha);
+
+  strcpy(filelog, "/online/log/procpen.");
+  strcat(filelog, szfecha);
+
+  printf("Apertura de archivo [%s]\n", filelog);
+  if ((salida=fopen(filelog, "a"))==NULL)
+      {
+        printf ("\nError: Apertura de archivo [%s]\n", filelog);
+        exit(1);
+      }
+
+  hIni=time(&hIni);
+  fprintf(salida, "Comienza proceso de actualizacion de pendientes %s",
+                  asctime(localtime(&hIni)));
+
+  EXEC SQL
+      DECLARE cursor_suc CURSOR FOR
+         SELECT nro_caj_sf, nro_ca, nro_caj_fic
+         FROM cred_suc
+         WHERE tip_cie=1;
+
+  EXEC SQL
+      OPEN cursor_suc;
+ 
+  EXEC SQL
+      FETCH cursor_suc
+      INTO :nro_caj_sf, :nro_ca, :nro_caj_fic;
+
+
+  while(sqlca.sqlcode==0)
+  {
+
+    fprintf(salida, "\nProcesando sucursal: [%s] CA: [%s]\n", 
+                    nro_caj_sf.arr, nro_ca.arr);
+    printf("Procesando sucursal: [%s] CA: [%s]\n", 
+                    nro_caj_sf.arr, nro_ca.arr);
+
+    strncpy(suc, (char *)nro_caj_sf.arr, 5);
+    suc[5]='\0';
+ 
+    printf("sucursal a procesar: [%s]\n", suc);
+
+    strcpy(filename, "/online/chec/suc");
+    strncat(filename, &suc[3], 2);
+    strcat(filename, "/pending.");
+    strcat(filename, szfecha);
+
+    procesa=1;
+   
+    printf("Apertura de archivo: [%s]\n", filename);
+    if ((fd=fopen(filename, "r"))==NULL)
+        {
+          printf("Error: Apertura de archivo: [%s]\n", filename);
+          fprintf(salida, "Error: Apertura de archivo: [%s]\n", filename);
+          procesa=0;
+        }
+
+    while((fgets(buffer,sizeof(buffer),fd)!=NULL) && procesa)
+    {
+
+       strncpy(TrxRead.nro_caj, buffer, 5);
+       strncpy(TrxRead.nro_caj_ori, buffer, 5);
+       strncpy(TrxRead.nro_trx, &buffer[5], 4);
+       strncpy(TrxRead.cod_tar, &buffer[9], 2);
+       
+       strcpy((char *)cod_tar.arr, TrxRead.cod_tar);
+       cod_tar.len=strlen(TrxRead.cod_tar);
+
+       if (strcmp((char *)cod_tar.arr,"07")==0)
+          strncpy(TrxRead.nro_tar, &buffer[12], 19);
+       else
+          strncpy(TrxRead.nro_tar, &buffer[11], 20);
+
+       strncpy(TrxRead.cod_aut, &buffer[31], 8);
+       strncpy(TrxRead.monto, &buffer[39], 14);
+       strncpy(TrxRead.fecha, &buffer[53], 6);
+       strncpy(TrxRead.cod_resoluc, &buffer[59], 2);
+       strncpy(TrxRead.fec_vtacard, &buffer[61], 4);
+       strncpy(TrxRead.hora, &buffer[65], 4);
+       strncpy(TrxRead.plansf, &buffer[69], 2);
+       strncpy(TrxRead.cuotas, &buffer[71], 3);
+
+       EXEC SQL
+           SELECT nro_ca
+           INTO :nro_ca
+           FROM cred_tarj
+           WHERE cod_tar=:cod_tar;
+
+       fprintf(salida, "procpen: Fecha: [%s]\n", TrxRead.fecha);     
+
+       strcpy((char *)nro_suc.arr, "001");
+       nro_suc.len=strlen((char *)nro_suc.arr);
+
+       strcpy((char *)nro_caj.arr, (char *)nro_caj_fic.arr);
+       nro_caj.len=strlen((char *)nro_caj_fic.arr);   
+
+       strcpy((char *)nro_trx.arr, TrxRead.nro_trx);
+       nro_trx.len=strlen(TrxRead.nro_trx);
+
+       strcpy((char *)mod_env.arr, "01");
+       mod_env.len=strlen((char *)mod_env.arr);
+
+       strcpy((char *)nro_caj_ori.arr, TrxRead.nro_caj_ori);
+       nro_caj_ori.len=strlen(TrxRead.nro_caj_ori);
+
+       strcpy((char *)cod_trx.arr, TrxRead.cod_resoluc);
+       cod_trx.len=strlen(TrxRead.cod_resoluc);
+
+       strcpy((char *)plan_sf.arr, TrxRead.plansf);
+       plan_sf.len=strlen((char *)plan_sf.arr);
+
+       strcpy((char *)nro_cuo.arr, TrxRead.cuotas);
+       nro_cuo.len=strlen((char *)nro_cuo.arr);
+
+
+/* Pongo codigo de estado 43 para no enviar a CA hasta la confirmacion */
+
+       strcpy((char *)cod_est.arr, "43");
+       cod_est.len=strlen((char *)cod_est.arr);
+
+       strcpy((char *)can_ret.arr, "0000");
+       can_ret.len=strlen((char *)can_ret.arr);
+
+
+/* Obtiene el numero de lote de la terminal ficticia de la sucursal 
+   correspondiente */
+
+       fprintf(salida, "procpen: caja fic: [%s]\n", nro_caj_fic.arr);  
+
+
+       if (strcmp((char *)cod_trx.arr,"00")==0)
+       {
+       strcpy((char *)cod_pro.arr, "000000");
+       cod_pro.len=strlen((char *)cod_pro.arr);
+       }
+       else
+       {
+       strcpy((char *)cod_pro.arr, "200000");
+       cod_pro.len=strlen((char *)cod_pro.arr);
+       }
+
+       aux=atof(TrxRead.monto);
+       aux2=aux*100;
+       memset(szmonto, 0, sizeof(szmonto));
+       sprintf(szmonto, "%.2f", aux2);
+
+       fprintf(salida, "procpen: AUX: [%.2f]\n", aux);
+       fprintf(salida, "procpen: szmonto: [%s]\n", szmonto);
+
+       strcpy((char *)monto.arr, szmonto);
+       monto.len=strlen(szmonto);
+
+       strcpy(nro_tar_aux, &TrxRead.nro_tar[4]); 
+
+       if (strcmp((char *)cod_tar.arr,"07")==0)
+       nro_tar_aux[15]='\0';
+       else
+       nro_tar_aux[16]='\0';
+
+       strcpy((char *)nro_tar.arr, nro_tar_aux);
+       nro_tar.len=strlen(nro_tar_aux);
+
+       printf("Nro de tarjeta: %s\n", nro_tar_aux);
+       fprintf(salida, "procpen: Nro de tarjeta: %s\n", nro_tar_aux);
+
+
+/****************************************************************************/
+/* Modificacion: 30/10/1997
+   Autor: Denise Lucien
+   Objetivo: Para Visa la fecha de caducidad debe ser "1111"                */
+/****************************************************************************/
+
+       if (strcmp((char *)cod_tar.arr,"02")==0)
+       {
+          strcpy((char *)fec_ven.arr, "1111");
+       }
+       else 
+       {
+          strcpy((char *)fec_ven.arr, "9912");
+       }
+       fec_ven.len=strlen((char *)fec_ven.arr);
+
+       strcpy((char *)mod_ing.arr, "012");
+       mod_ing.len=strlen((char *)mod_ing.arr);
+
+       strcpy((char *)nro_tic.arr, TrxRead.nro_trx);
+       nro_tic.len=strlen(TrxRead.nro_trx);
+
+       strcpy((char *)fec_vtacard.arr, TrxRead.fec_vtacard);
+       fec_vtacard.len=strlen(TrxRead.fec_vtacard);
+
+/* Obtengo el numero de trace actual  
+
+       EXEC SQL
+           SELECT nro_trc
+           INTO :nro_trc
+           FROM cred_term
+           WHERE nro_caj=:nro_caj and 
+                 nro_ca=:nro_ca;
+
+       printf("Obteniendo nro de trace. sqlcode: %ld\n", sqlca.sqlcode);
+       printf("nro de trace anterior: [%s]\n", nro_trc.arr);
+
+       lnro_trc=atoi((char *)nro_trc.arr);
+       lnro_trc++;
+       sprintf(sznro_trc, "%d", lnro_trc);
+       printf("voy a insertar con [%s]\n", sznro_trc);
+       
+       strcpy((char *)nro_trc.arr, sznro_trc);
+       nro_trc.len=strlen((char *)nro_trc.arr);	*/	
+
+
+/* Procesamiento del cod de autorizacion
+   Codigo de autorizacion. Pueden darse tres casos:
+   1) 99 y la hora
+   2) Provisto por Posnet
+   3) todos ceros  */ 
+
+
+       memset(fec, 0, sizeof(fec));
+       getFechaActual(fec);
+       printf("fecha actual: [%s]\n", fec);
+       fprintf(salida, "procpen: fecha actual: [%s]\n", fec);
+
+       strcpy((char *)szfec_loc, TrxRead.fecha);
+
+       fprintf(salida, "procpen: codigo de autorizacion [%s]\n", 
+                       TrxRead.cod_aut);
+
+       if (!strncmp(&TrxRead.cod_aut[2], "99", 2))
+       {
+          strcpy((char *)cod_aut.arr, "000000");
+          cod_aut.len=strlen((char *)cod_aut.arr);
+       }
+       else if (!strncmp(TrxRead.cod_aut, "00000000", 8))
+            {
+               strcpy((char *)cod_aut.arr, "000000");
+               cod_aut.len=strlen((char *)cod_aut.arr);
+            }
+            else
+            {
+               strcpy((char *)cod_aut.arr, &TrxRead.cod_aut[2]);
+               cod_aut.len=strlen((char *)cod_aut.arr);
+            }
+
+       strcat((char *)szfec_loc, TrxRead.hora);
+       strcat((char *)szfec_loc, "00");
+
+       strcpy((char *)fec_loc.arr, &szfec_loc[2]);
+       fec_loc.len=strlen(&szfec_loc[2]);
+
+       fprintf(salida, "procpen: cod aut [%s] fec loc [%s]\n", 
+                       cod_aut.arr, fec_loc.arr);
+
+       fprintf(salida, "procpen: nro_trx [%s] nro_tar [%s] "
+                       "nro_trc [%s] monto [%s]\n",
+               nro_trx.arr, nro_tar.arr, nro_trc.arr, monto.arr);
+
+       fprintf(salida, "procpen: Plan [%*.*s] cod_tar [%*.*s] ",
+            plan_sf.len,plan_sf.len,plan_sf.arr,cod_tar.len,
+            cod_tar.len,cod_tar.arr);
+
+       EXEC SQL
+            SELECT cod_con_cie, cod_mon, plan_iso, cod_con_cie_com
+            INTO   :cod_con_cie, :cod_mon, :plan_iso, :cod_con_cie_com
+            FROM   cred_plan
+            WHERE  cod_tar=:cod_tar AND
+                   plan_sf=:plan_sf;
+
+       fprintf(salida,"Resultado [%d]\n",sqlca.sqlcode);
+
+       EXEC SQL
+           SELECT nro_caj_ca, nro_lot
+           INTO   :nro_caj_ca, :nro_lot
+           FROM   cred_term
+           WHERE  nro_caj=:nro_caj_fic AND
+                  nro_ca=:nro_ca AND
+                  cod_con_cie=:cod_con_cie;
+
+
+       fprintf(salida, "procpen: select en cred_term: sqlcode: %d\n",
+                       sqlca.sqlcode);
+
+       if (sqlca.sqlcode==1403)
+       {
+          fprintf(salida, "no puedo obtener datos con ca: [%s] caja: [%s]\n", 
+                          nro_ca.arr,nro_caj.arr );  
+       }
+
+       fprintf(salida, "procpen: lote: [%s]\n", nro_lot.arr);  
+ 
+       strcpy((char *)nro_com.arr, "");
+       nro_com.len=strlen((char *)nro_com.arr);
+
+
+       fprintf(salida, "procpen: nro_caj_sf [%*.*s]", nro_caj_sf.len,
+               nro_caj_sf.len,nro_caj_sf.arr);  
+       fprintf(salida, "procpen: cod_tar [%*.*s]", cod_tar.len,
+               cod_tar.len,cod_tar.arr);  
+       fprintf(salida, "procpen: cod_con_cie_com: [%*.*s]\n", 
+               cod_con_cie_com.len,cod_con_cie_com.len,cod_con_cie_com.arr);  
+
+       EXEC SQL
+           SELECT NRO_COM
+           INTO  :nro_com
+           FROM   cred_com
+           WHERE  NRO_CAJ_SF=:nro_caj_sf
+           AND    COD_TAR=:cod_tar
+           AND    cod_con_com_cie=:cod_con_cie_com;
+
+       fprintf(salida, "procpen: sqlcode [%d]\n",sqlca.sqlcode); 
+
+       fprintf(salida, "procpen: nro_com [%s] nro_caj_ca [%s]\n", 
+                       nro_com.arr, nro_caj_ca.arr);
+
+       fprintf(salida, "procpen: plan_sf [%s] Plan_iso [%s]\n", 
+                       plan_sf.arr, plan_iso.arr);
+
+       fprintf(salida, "procpen: nro_cuo [%s] cod_con_cie [%s]\n", 
+                       nro_cuo.arr, cod_con_cie.arr);
+
+
+/*       fprintf(salida, "inserto con nro_suc [%s]\n", nro_suc.arr); 
+       fprintf(salida, "inserto con nro_caj [%s]\n", nro_caj.arr);  
+       fprintf(salida, "inserto con nro_caj_ori [%s]\n", nro_caj_ori.arr);  
+       fprintf(salida, "inserto con nro_trx [%s]\n", nro_trx.arr); 
+       fprintf(salida, "inserto con mod_env [%s]\n", mod_env.arr);
+       fprintf(salida, "inserto con cod_tar [%s]\n", cod_tar.arr);
+       fprintf(salida, "inserto con nro_ca [%s]\n", nro_ca.arr);
+       fprintf(salida, "inserto con cod_trx [%s]\n", cod_trx.arr);
+       fprintf(salida, "inserto con cod_est [%s]\n", cod_est.arr);
+       fprintf(salida, "inserto con can_ret [%s]\n", can_ret.arr);
+       fprintf(salida, "inserto con nro_lot [%s]\n", nro_lot.arr);
+       fprintf(salida, "inserto con cod_pro [%s]\n", cod_pro.arr);
+       fprintf(salida, "inserto con monto [%s]\n", monto.arr);
+       fprintf(salida, "inserto con nro_tar [%s]\n", nro_tar.arr);
+       fprintf(salida, "inserto con fec_loc [%s]\n", fec_loc.arr);
+       fprintf(salida, "inserto con fec_ven [%s]\n", fec_ven.arr);
+       fprintf(salida, "inserto con mod_ing [%s]\n", mod_ing.arr);
+       fprintf(salida, "inserto con nro_tic [%s]\n", nro_tic.arr);
+       fprintf(salida, "inserto con cod_aut [%s]\n", cod_aut.arr);    
+       fprintf(salida, "inserto con fec_vtacard [%s]\n", fec_vtacard.arr); */   
+
+
+
+       EXEC SQL
+           INSERT
+              INTO cred_trx (NRO_SUC, 
+                             NRO_CAJ, 
+                             NRO_TRX, 
+                             MOD_ENV, 
+                             COD_TAR,
+                             NRO_CA,
+                             COD_TRX,
+                             COD_EST,
+                             CAN_RET,
+                             NRO_LOT,
+                             COD_PRO,
+                             MONTO,
+                             NRO_TAR,
+                             FEC_LOC,
+                             FEC_VEN,
+                             MOD_ING,
+                             NRO_TIC,
+                             COD_AUT,
+                             FEC_VTACARD,
+                             NRO_CAJ_SF,
+                             NRO_CAJ_ORI,
+                             NRO_CAJ_CA,
+                             NRO_COM,
+                             PLAN_ISO,
+                             PLAN_SF,
+                             NRO_CUO,
+                             COD_MON)
+
+              VALUES (:nro_suc, 
+                      :nro_caj, 
+                      :nro_trx, 
+                      :mod_env, 
+                      :cod_tar,
+                      :nro_ca,
+                      :cod_trx,
+                      :cod_est,
+                      :can_ret,
+                      :nro_lot,
+                      :cod_pro,
+                      :monto, 
+                      :nro_tar,
+                      :fec_loc,
+                      :fec_ven,
+                      :mod_ing,
+                      :nro_trx,
+                      :cod_aut,
+                      :fec_vtacard,
+                      :nro_caj_sf,
+                      :nro_caj_ori,
+                      :nro_caj_ca,
+                      :nro_com,
+                      :plan_iso,
+                      :plan_sf,
+                      :nro_cuo,
+                      :cod_mon);
+
+       printf("sqlcode: %ld\n", sqlca.sqlcode);
+
+       if (sqlca.sqlcode==0)
+       {
+          fprintf(salida, "procpen: trx agregada en cred_trx\n");
+
+          /* Actualizo nro de trace en tabla cred_term */
+
+          fprintf(salida, "procpen: actualizo trace en tabla cred_term\n");
+
+/****************************************************************************/
+/* Modificacion: 18/03/1998
+   Autor: Piccirillo Fernando
+   Objetivo: Comento el sig. update porque no utilizo el nro. de trace  */
+/****************************************************************************/
+ 
+/*          EXEC SQL
+              UPDATE cred_term
+              SET nro_trc=:nro_trc
+              WHERE nro_caj=:nro_caj and
+                    nro_ca=:nro_ca;     */
+
+          EXEC SQL
+              COMMIT;
+
+       }
+       else
+       {
+          fprintf(salida, "procpen: error en insert tabla cred_trx %ld\n", 
+                  sqlca.sqlcode);
+          printf("procpen: error en insert tabla cred_trx %ld\n", 
+                  sqlca.sqlcode);
+       }
+
+    } /* Fin del while de archivo pending */
+
+    fclose(fd);
+
+    EXEC SQL
+        FETCH cursor_suc
+        INTO :nro_caj_sf, :nro_ca, :nro_caj_fic;
+
+
+  }  /* Fin del while ppal. */ 
+
+  EXEC SQL
+      CLOSE cursor_suc;
+
+  hIni=time(&hIni);
+  fprintf(salida, "\nProceso finalizado %s\n",
+                  asctime(localtime(&hIni)));
+
+}

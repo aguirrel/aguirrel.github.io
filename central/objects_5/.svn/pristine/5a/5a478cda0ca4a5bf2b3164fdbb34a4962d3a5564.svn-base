@@ -1,0 +1,1026 @@
+#ifdef OS_Linux
+#pragma pack(1)
+#endif
+
+/*
++-----------------+------------------------------------------------------------+
+| FUENTE          | X25Daemon.C                                                |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Demonio para enviar las peticiones de autorizacion al      |
+|                 | centro autorizador mediante X25                            | 
++-----------------+------------------------------------------------------------+
+*/
+#define _LARGE_THREADS	1
+#include <pthread.h>
+#include <unistd.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <Queues.h>
+#include <Semaphores.h>
+#include "LinkCVC.h"
+#include "LinkTCP.h"
+#include "LinkX25.h"
+#include "Config.h"
+#include "8583.h"
+#include "Daemons.h"
+#include "Log.h"
+#include "CACStat.h"
+
+#define NUM_VERSION		"v1.50 06-Oct-2014 (3 min)"
+
+#define ML_CANAL		'I'		/* Levanta todos los canales configurados */
+#define UN_CANAL		'U'		/* Levanta un unico canal configurado     */
+#define CF_CANAL		'C'		/* Informacion configuracion de canales   */
+
+#define MAX_REINTENTOS	3
+#define SLEEP_NOCANAL1	15
+#define SLEEP_NOCANAL2	3
+#define SLEEP_NOTHREAD	3
+#define SLEEP_NOSIGNAL	15
+#define TIME_OUT_RESPU	60
+
+#define TPDU_LEN		5
+#define MAX_QERRS		10
+
+void PedirInformacion(char *);
+
+StrCaLogi				CaLogi[MAX_SVC];
+Config					Cfg(CONFIG_FILE);
+Log						LogAlarm;
+Queue					XQueue;
+CACStatus				CACS;
+
+struct strRelMsg 
+{
+    int SndEvn;             /* Evento de envio     */
+    int RtaEvn;             /* Evento de respuesta */
+};    
+
+/* Pares Tipo Mensaje = Evento Respuesta */
+struct strRelMsg DefEventPairs[]=
+{
+    {TYPE_VISA_VENTA,               EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_VENTA_RTA,           EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_DEVOL,               EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_DEVOL_RTA,           EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_VENTA,          EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_VENTA_RTA,      EVENT_SNDTRXANUL_RTA},
+    {TYPE_VISA_ANUL_DEVOL,          EVENT_PRICEONLINE_RTA},
+    {TYPE_VISA_ANUL_DEVOL_RTA,      EVENT_SNDTRXANUL_RTA},
+    {TYPE_VISA_VENTA_LOCAL,         EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_VENTA_LOCAL_RTA,     EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_DEVOL_LOCAL,         EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_DEVOL_LOCAL_RTA,     EVENT_RTATRXOFFLINE},
+    {TYPE_VISA_ANUL_VENTA_LOCAL,    EVENT_SNDTRXANUL_RTA},
+    {TYPE_VISA_ANUL_VENTA_LOCAL_RTA,EVENT_SNDTRXANUL_RTA},
+    {TYPE_VISA_ANUL_DEVOL_LOCAL,    EVENT_SNDTRXANUL_RTA},
+    {TYPE_VISA_ANUL_DEVOL_LOCAL_RTA,EVENT_SNDTRXANUL_RTA},
+    {TYPE_VISA_REV_VENTA,           EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_VENTA_RTA,       EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_DEVOL,           EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_DEVOL_RTA,       EVENT_SNDREVERSO_RTA},
+    {TYPE_VISA_REV_ANUL_VENTA,      EVENT_REVTRXANUL_RTA},
+    {TYPE_VISA_REV_ANUL_VENTA_RTA,  EVENT_REVTRXANUL_RTA},
+    {TYPE_VISA_REV_ANUL_DEVOL,      EVENT_REVTRXANUL_RTA},
+    {TYPE_VISA_REV_ANUL_DEVOL_RTA,  EVENT_REVTRXANUL_RTA},
+    {TYPE_VISA_CIERRE,              EVENT_CIERRE_RTA}, 
+    {TYPE_VISA_CIERRE_RTA,          EVENT_CIERRE_RTA}, 
+    {TYPE_VISA_CIERRE_B,            EVENT_CIERRE_RTA},
+    {TYPE_VISA_CIERRE_B_RTA,        EVENT_CIERRE_RTA},
+    {TYPE_VISA_BATCH,               EVENT_BATCH_RTA},
+    {TYPE_VISA_BATCH_RTA,           EVENT_BATCH_RTA},
+    {TYPE_VISA_TEST,                EVENT_ECHOTEST_RTA},
+    {TYPE_VISA_TEST_RTA,            EVENT_ECHOTEST_RTA},
+    {-1,-1}                         /* Fin de tabla */
+};
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | ObtenerEvento                                              |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Obtiene el evento de respuesta                             |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int ObtenerEvento(int tipoFrom)
+{
+	int counter=0;
+
+	for (counter=0;DefEventPairs[counter].SndEvn!=-1;counter++)
+	{
+		if (DefEventPairs[counter].SndEvn==tipoFrom)
+			break;
+	}
+	return DefEventPairs[counter].RtaEvn;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | ControlEjecucion                                           |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Controla la ejecucion de los procesos lectores. Si todos   |
+|                 | estan caidos reinicia la placa X25.                        | 
++-----------------+------------------------------------------------------------+
+*/
+void *ControlEjecucion(void *arg)
+{
+	int iCont;
+	int iActivos, iBloqueados;
+	int iTiempoEspera = 60;
+	char szAux[128];
+	int  iConfigurados;
+	int  iNoLevantados;
+	char szBusqueda[256];
+	char szResultado[256];
+    
+	sleep(iTiempoEspera);
+
+	memset(szAux, 0, sizeof(szAux));
+	if (Cfg.GetItem("CAVisaDaemon", "TimeCtrlThread", szAux) == 0)
+	{
+		iTiempoEspera = atoi(szAux) < 15 ? 15 : atoi(szAux);
+	}
+
+	iConfigurados = 0;
+	for (iCont=0; iCont<MAX_SVC; iCont++)
+	{
+		sprintf(szBusqueda, "NroChannels%02d", iCont);
+		memset(szResultado, 0, sizeof(szResultado));
+		if (Cfg.GetItem("CAVisaDaemon", szBusqueda, szResultado) == 0)
+		{
+			iConfigurados += atoi(szResultado);
+		}
+	}
+	LogAlarm.Put(0, "Ctr[XXX]: Cantidad de canales configurados: %d\n", iConfigurados);
+
+	while (1)
+	{
+		LogAlarm.Put(0, "Ctr[XXX]: Verificando canales - %s", currentTimeLog() ); 
+		iActivos = 0; iBloqueados = 0;
+		for (iCont=0; iCont<MAX_SVC; iCont++)
+		{
+			if (CaLogi[iCont].libre!=OK) 
+			{
+				(CaLogi[iCont].Argumentos.OnLineLector==1) ? iActivos++ : iBloqueados++;				
+			}
+		}
+		iNoLevantados = iConfigurados - (iActivos + iBloqueados);
+		LogAlarm.Put(0, "Ctr[XXX]: Canales:[%d] Activos:[%d] Bloqueados:[%d] Terminados:[%d]\n", 
+											iConfigurados, iActivos, iBloqueados, iNoLevantados);
+		sleep(iTiempoEspera);	
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | LogMsg                                                     |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Loguea el mensaje enviado o recibido al centro autorizador |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int LogMsg(Iso_Msg *Msg,char *id_arch)
+{
+	char buffer[15];
+	char result[128];
+	char fileLog[50];
+	char logDir[128];
+	char msgBuffer[500];
+	int  largoMsg;
+	char szFechaHora[30];
+	FILE *fout;
+
+	memset(logDir, 0, sizeof(logDir));
+	Cfg.GetItem("CAVisaDaemon", "LogDir", logDir); 
+	sprintf(szFechaHora, "%s", Msg->GetField(7));
+	sprintf(fileLog,"%s%s%04d%s%s.msg", 
+		logDir, id_arch, Msg->GetMsgType(), Msg->GetField(11), szFechaHora);
+
+	sprintf(buffer,"LogMsg0%d",Msg->GetMsgType()/10);
+	memset(result, 0, sizeof(result));
+	Cfg.GetItem("CAVisaDaemon", buffer, result);
+
+	if (!strcmp(result,"on"))
+	{
+		if ((fout=fopen(fileLog, "wb"))!=NULL)
+		{	
+			largoMsg=Msg->GetMsgString(msgBuffer);
+			fwrite(msgBuffer, largoMsg, 1, fout);
+			fclose(fout);
+		}
+	}
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | Lector                                                     |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Thread que escucha al CA                                   |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+void *Lector(void *arg)
+{
+	StrArgThread 	*Arg;
+	Queue 		WQueue;
+	char		CabLog[50];
+	Config		Cfg(CONFIG_FILE);
+	int			tipoFrom,counter,ret,largoMsg,Event;
+	char		x25Msg[MAX_TAM_ISO+1];
+	char		StrMsgIso[MAX_TAM_ISO+1];
+	Iso_Msg		*RtaIsoMsg;
+	char		szCajaCA[16];
+	int			iErrX25, iSysX25;
+	int			tipoMsg;
+	int			iLCajaCA;
+	char		szAux[16];
+	char		szLog[MAX_TAM_ISO * 3 + 1];
+
+	Arg = (StrArgThread *) arg;
+	sprintf(CabLog,"Rta[%03d]",Arg->idCaLogi); 
+
+	LogAlarm.Put(0,"%s: Comenzando la operacion\n",CabLog); 
+	ret=WQueue.Open(Arg->WQueueID,Arg->WQueuePerm);
+
+	Arg->OnLineLector = 1;
+	Arg->tLastTime    = 0;
+	while (1)
+	{
+		if (Arg->Status.Status()==OK)
+		{
+			ret = Arg->SVC->Read(x25Msg,&largoMsg,&tipoMsg); 
+			iErrX25 = Arg->SVC->GetErrno();
+			iSysX25 = Arg->SVC->GetErSys();
+			LogAlarm.Put(0,"%s: Leido del SVC Long[%d] Ret[%d] Err[%d] Sys[%d] Tip[%d]\n", 
+									CabLog, largoMsg, ret, iErrX25, iSysX25, tipoMsg);
+			if ( ret>=0 ) 
+			{
+				Arg->tLastTime = 0;
+				if ((largoMsg==0)||(largoMsg>MAX_TAM_ISO))
+				{
+					if (largoMsg)
+					{
+						LogAlarm.Put(0,"%s: ERROR. Mensaje descartado. Longitud excedida %d\n",CabLog,largoMsg);
+					}
+					continue;
+				}
+				/* Se elmimina el TPDU en caso de ser necesario */
+				if (Arg->flag_tpdu==OK)
+				{
+					if (largoMsg > TPDU_LEN)
+					{
+						memcpy(StrMsgIso,x25Msg+TPDU_LEN,largoMsg-TPDU_LEN);
+						largoMsg-=TPDU_LEN;
+					}
+					else
+					{
+						LogAlarm.Put(0,"%s: ERROR. Mensaje descartado por longitud %d\n",CabLog,largoMsg);
+						continue;
+					}
+				}	
+				else
+				{
+					memcpy(StrMsgIso,x25Msg,largoMsg);
+				} 
+
+				/* Se busca el evento asociado y se loguea el msg de ser necesario */
+				RtaIsoMsg = new Iso_Msg(StrMsgIso, largoMsg);
+				tipoFrom = RtaIsoMsg->GetMsgType();
+				Event=ObtenerEvento(tipoFrom);
+				if (Event==NOOK)
+				{
+					LogAlarm.Put( 0, "%s: Tipo de msg [%d] no tiene par\n",CabLog,tipoFrom);
+					
+					/* Loguea el mensaje ISO para detalles */
+					memset(szLog, 0, sizeof(szLog));
+					for (int iCont=0; iCont<largoMsg; iCont++)
+					{
+						sprintf(szAux, "%02x ", StrMsgIso[iCont]);
+						strcat(szLog, szAux);
+					}
+					LogAlarm.Put(10, "%s: Tpdu:[%d] Mensaje Iso: [ %s]\n", CabLog, Arg->flag_tpdu, szLog);
+					
+					delete RtaIsoMsg;
+					continue;
+				}
+				LogMsg(RtaIsoMsg,"r");
+				sprintf(szCajaCA, "%s", RtaIsoMsg->GetField(41));
+				iLCajaCA = strlen(szCajaCA);
+				LogAlarm.Put(0, "%s: CA[%d] Caj[%s] L[%d] Msj[%d] Evt[%d] - %s",
+								CabLog,Arg->CodigoCa, szCajaCA, iLCajaCA, tipoFrom, Event, currentTimeLog());
+				
+				/* Loguea el mensaje ISO para detalles */
+				if (iLCajaCA==0)
+				{
+					memset(szLog, 0, sizeof(szLog));
+					for (int iCont=0; iCont<largoMsg; iCont++)
+					{
+						sprintf(szAux, "%02x ", StrMsgIso[iCont]);
+						strcat(szLog, szAux);
+					}
+					LogAlarm.Put(10, "%s: Tpdu:[%d] Mensaje Iso: [ %s]\n", CabLog, Arg->flag_tpdu, szLog);
+				}
+
+				delete RtaIsoMsg;
+
+				ret=WQueue.SendMsg(Event,StrMsgIso,largoMsg);
+				if (ret==NOOK)
+				{
+					LogAlarm.Put(0,"%s: ERROR %d en EQueue!!\n",CabLog, WQueue.GetErrno());
+				}
+				Arg->OnLineLector = 1;
+				Arg->tLastTime    = 0;
+				continue;
+			}
+			LogAlarm.Put(0,"%s: ERROR leyendo del SVC \n",CabLog);
+		}
+		/* Si se ejecuta esto es que o bien no se pudo enviar el mensaje o bien el canal tenia marca de caido */
+		Arg->OnLineLector = 0;
+		LogAlarm.Put(0,"%s: ERROR. Canal bloqueado - %s",CabLog, currentTimeLog());
+		pthread_mutex_lock(&Arg->lock_status);  
+		Arg->Status.SetCaDown();
+		pthread_cond_wait(&Arg->cond_status,&Arg->lock_status);
+		pthread_mutex_unlock(&Arg->lock_status);
+		LogAlarm.Put(0,"%s: Canal levantado - Continuando - CA[%d]\n",CabLog, Arg->CodigoCa);
+		CACS.Up(Arg->CodigoCa);
+		Arg->tLastTime    = 0;
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | Escritor                                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Thread que escribe al CA                                   |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+void *Escritor(void *arg)
+{
+	StrArgThread  *Arg; 
+	Queue RQueue;
+	char msg_str[500];
+	char CabLog[20];
+	Iso_Msg *MsgIso;
+	int cont,ret,re2,largoMsg;
+	char x25Msg[500];
+	unsigned char cCar;
+	unsigned char szTPDU[TPDU_LEN*2+1];
+	unsigned char szTPDUResult[TPDU_LEN+1];
+	pthread_attr_t	attrThread;
+	int iCantPend;
+	int iErrX25, iSysX25;
+	char szCajaCA[16];
+	time_t tLastTime;
+
+	Arg = (StrArgThread *) arg;
+	sprintf(CabLog,"Req[%03d]",Arg->idCaLogi); 
+
+	LogAlarm.Put(0,"%s: Comenzando la operacion\n",CabLog); 
+	ret=RQueue.Open(Arg->RQueueID,Arg->RQueuePerm);
+
+	while (1)
+	{
+		if (Arg->Status.Status()==OK)
+		{
+			LogAlarm.Put(0,"%s: Esperando mensaje de la Cola - %s",CabLog, currentTimeLog());
+			largoMsg=RQueue.GetMsg(Arg->CodigoCa+1,msg_str,sizeof(msg_str));
+			if (largoMsg==NOOK)
+			{
+				LogAlarm.Put(0,"%s: ERROR %d en Cola X\n",CabLog,RQueue.GetErrno());
+				continue;
+			}
+			if (Arg->Status.Status()==OK)
+			{
+				if (Arg->flag_tpdu==OK)
+				{
+					memset(szTPDU, 0, sizeof(szTPDU));	
+					memcpy(szTPDU, Arg->NumberTPDU, TPDU_LEN*2);
+					for (cont=0;cont<TPDU_LEN*2;cont++)
+					{
+						if ((cont%2)==0)
+							szTPDUResult[cont/2]  = (szTPDU[cont] << 0x04);
+						else
+							szTPDUResult[cont/2] |= (szTPDU[cont] - 0x30);
+					}
+					memcpy(x25Msg, szTPDUResult, TPDU_LEN);
+					memcpy(x25Msg+TPDU_LEN,msg_str,largoMsg);
+					largoMsg+=TPDU_LEN; 
+				}
+				else
+				{
+					memcpy(x25Msg,msg_str,largoMsg);
+				}
+
+				time(&tLastTime);
+				if ((Arg->tLastTime==0) || (difftime(tLastTime, Arg->tLastTime) < TIME_OUT_RESPU))
+				{
+					MsgIso= new Iso_Msg(msg_str,largoMsg-TPDU_LEN);
+					LogMsg(MsgIso,"q");
+					ret=Arg->SVC->Write(x25Msg, largoMsg);
+					iErrX25 = Arg->SVC->GetErrno();
+					iSysX25 = Arg->SVC->GetErSys();
+					iCantPend = Arg->SVC->MsgPnd();
+					sprintf(szCajaCA, "%s", MsgIso->GetField(41) );
+					LogAlarm.Put(0, "%s: CA[%d] Caja[%s] Long[%d] Ret[%d] Err[%d] Sys[%d] PendRta[%d]\n", 
+									  CabLog, Arg->CodigoCa, szCajaCA, largoMsg, ret, iErrX25, iSysX25, iCantPend );
+					delete MsgIso;
+					if (ret==OK)
+					{
+						if (Arg->tLastTime == 0)
+						{
+							time(&Arg->tLastTime);
+						}
+						continue;
+					}
+				}
+				else
+				{
+					LogAlarm.Put(0, "%s: ERROR CA[%d] Mensaje sin respuesta - %s", 
+											CabLog, Arg->CodigoCa, currentTimeLog());
+				}
+			}
+			else
+			{
+				LogAlarm.Put(0, "%s: ERROR CA[%d] Lector bloqueado - %s", CabLog, Arg->CodigoCa, currentTimeLog());
+			}
+		} 
+		/* Si se llega hasta aqui, el canal esta bajo o bien no se pudo escribir */
+		/* Procedimiento de levantada */
+		Arg->Status.SetCaDown();	
+		LogAlarm.Put(0,"%s: ERROR. Canal Abajo - levantando - %s",CabLog, currentTimeLog());       
+			
+		/* Intenta recuperacion del canal */
+		cont=0;
+		ret=NOOK;
+		while (ret==NOOK)
+		{
+			/* Baja el canal */
+			LogAlarm.Put(0,"%s: Bloqueando Entrada de lector\n",CabLog);
+			re2 = Arg->SVC->Close();
+			iErrX25 = Arg->SVC->GetErrno();
+			iSysX25 = Arg->SVC->GetErSys();
+			LogAlarm.Put(0, "%s: Close: CA[%02d] Ret[%d] Err[%d] Sys[%d]\n", CabLog, Arg->CodigoCa, re2, iErrX25, iSysX25);
+			
+			/* Sube el canal */
+			ret = Arg->SVC->Open(Arg->NUA, Arg->NUP, Arg->IDE);
+			iErrX25 = Arg->SVC->GetErrno();
+			iSysX25 = Arg->SVC->GetErSys();
+			LogAlarm.Put(0, "%s: Open: CA[%02d] Ret[%d] Err[%d] Sys[%d]\n", CabLog, Arg->CodigoCa, ret, iErrX25, iSysX25);			
+			
+			/* Verifica recuperacion */
+			if (ret!=OK)
+			{
+				LogAlarm.Put(0, "%s: ERROR No se puede levantar CA[%02d] - Durmiendo\n", CabLog, Arg->CodigoCa);
+				ret = NOOK;
+				sleep(SLEEP_NOCANAL1);	
+			}
+			else
+			{
+				/* Levanta el flag de estado del canal */
+				LogAlarm.Put(0,"%s: Canal levantado CA[%02d] - Arrancando Lector\n", CabLog, Arg->CodigoCa);	
+				Arg->Status.SetCaUp();
+				Arg->tLastTime = 0;
+				
+				/* Activa nuevamente el thread lector */
+				pthread_mutex_lock(&Arg->lock_status);  
+				ret = pthread_cond_signal(&Arg->cond_status);
+				pthread_mutex_unlock(&Arg->lock_status);  
+				if (ret)
+				{
+					Arg->Status.SetCaDown();		                  
+					LogAlarm.Put(0,"%s: ERROR [%d]. Despertando Lector\n",CabLog, ret);
+					sleep(SLEEP_NOSIGNAL);
+					ret = NOOK;
+				}
+				else
+				{
+					LogAlarm.Put(0,"%s: OK Despertando Lector\n",CabLog, ret);
+					ret = OK;
+				}
+				/* Fin activacion thread */
+			}
+		} /* fin del while de recuperacion */
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | InicializarCa                                              |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Abre los SVC necesarios por cada C.A, inicializando y      |
+|                 | lanzando los threads y creando los semaforos de sincroniz  | 
++-----------------+------------------------------------------------------------+
+*/
+int InicializarCa(char *szCodigoCa)
+{
+    int i=0;
+    char str_search_conf[50];
+    char str_resul_conf[128];
+    char Commio[10];
+    char Nua[35];
+	char Nup[35];
+	char Ide[35];
+    int NroChannels,rc1,rc2,ret, re2;
+    char UseCallUserData[3];
+    char UseTPDU[4];
+    char CallUserData[2][11];
+    long EQueueID,EQueuePerm,XQueueID,XQueuePerm;
+    long StatusBaseID,StatusPerm,SemLecBaseID,SemLecPerm;
+    int Cant;
+	char NumberTPDU[11];
+	pthread_attr_t	attrThread1;
+	pthread_attr_t	attrThread2;
+	int iContReintentos;
+	int iErrX25, iSysX25;
+	int CodigoCa;
+	char cCodMensa;
+	char szInfoCanal[256];
+	char szSep[] = "#";
+	char *ptrToken;
+	int  iCaut, iConf, iCrea, iActi, iBloq;
+	int  iTOut = 15;
+	char sEnlace[3];
+
+    /* Obtiene NUA, COMMIO Call User Data (de ser necesario),        */
+    /* necesidad de utilizacion de TPDU y cantidad de SVC para el CA */
+	CodigoCa  = atoi(&szCodigoCa[1]);
+	cCodMensa = szCodigoCa[0];
+	LogAlarm.Put(0, "Ini[XXX]: Canal[%02d] Comando[%c]\n", CodigoCa, cCodMensa);
+
+    sprintf(str_search_conf,"Commio%02d",CodigoCa);
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+    Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+    strcpy(Commio,str_resul_conf);
+	strcpy(Nup,str_resul_conf);
+
+    sprintf(str_search_conf,"NUA%02d",CodigoCa);
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+    strcpy(Nua,str_resul_conf);
+    ptrToken = strstr(Nua, ":");
+    if (ptrToken)
+    {
+		*ptrToken = 0;
+		strcpy(Nup, ptrToken+1);
+    }
+
+	sprintf(str_search_conf,"IDE%02d",CodigoCa);
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+    strcpy(Ide,str_resul_conf);
+
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	if (Cfg.GetItem("CAVisaDaemon", "TimeoutConnect", str_resul_conf) == 0)
+	{
+		iTOut = atoi(str_resul_conf); 
+	}
+
+    if (cCodMensa==UN_CANAL)
+	{
+		NroChannels=1;
+	}
+	else
+	{
+		sprintf(str_search_conf,"NroChannels%02d",CodigoCa);
+		memset(str_resul_conf, 0, sizeof(str_resul_conf));
+		Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+		NroChannels=atoi(str_resul_conf);
+	}
+
+	/* Verifica que haya canales pendientes de levantar */
+	memset(szInfoCanal, 0, sizeof(szInfoCanal));
+	PedirInformacion(szInfoCanal);
+	ptrToken = strtok(szInfoCanal, szSep );
+	while( ptrToken != NULL )
+	{
+		sscanf(ptrToken, "%02d-%02d-%02d-%02d-%02d", &iCaut, &iConf, &iCrea, &iActi, &iBloq);
+		if (iCaut == CodigoCa)
+		{
+			if (iCrea >= NroChannels)
+			{
+				LogAlarm.Put(0, "Ini[XXX]: CA[%02d] ERROR Canales ya levantados [%d#%d]\n", CodigoCa, iCrea, NroChannels);
+				return OK;
+			}
+			break;
+		}
+		ptrToken = strtok( NULL, szSep );
+	}
+	
+    sprintf(str_search_conf,"UseCallUserData%02d",CodigoCa);
+    memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+    strcpy(UseCallUserData,str_resul_conf);
+
+    if (!strcmp(UseCallUserData,"on"))
+    { 
+		/* Si necesitamos el Call User Data, entonces obtenemos su valor */
+		sprintf(str_search_conf,"CallUserData%02d0",CodigoCa);
+		memset(str_resul_conf, 0, sizeof(str_resul_conf));
+		Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+		strcpy(CallUserData[0],str_resul_conf);
+
+		sprintf(str_search_conf,"CallUserData%02d1",CodigoCa);
+		memset(str_resul_conf, 0, sizeof(str_resul_conf));
+		Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+		strcpy(CallUserData[1],str_resul_conf);
+    }
+
+    sprintf(str_search_conf,"UseTPDU%02d",CodigoCa);
+    memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+    strcpy(UseTPDU,str_resul_conf);
+
+    if (!strcmp(UseTPDU,"on"))
+    { 
+		sprintf(str_search_conf,"NumberTPDU%02d",CodigoCa);
+		memset(str_resul_conf, 0, sizeof(str_resul_conf));
+		Cfg.GetItem("CAVisaDaemon", str_search_conf, str_resul_conf);
+		strcpy(NumberTPDU,str_resul_conf);
+    }
+
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+    Cfg.GetItem("CAVisaDaemon","QueueID",str_resul_conf);
+    XQueueID=atol(str_resul_conf);
+    
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("CAVisaDaemon", "QueuePerms", str_resul_conf);
+    XQueuePerm=atol(str_resul_conf);
+
+    memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("VisaDaemon", "QueueID", str_resul_conf);
+    EQueueID=atol(str_resul_conf);
+    
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("VisaDaemon", "QueuePerms", str_resul_conf);
+    EQueuePerm=atol(str_resul_conf);
+
+    memset(str_resul_conf, 0, sizeof(str_resul_conf));
+	Cfg.GetItem("CAVisaDaemon", "StatusBaseID", str_resul_conf);
+    StatusBaseID=atol(str_resul_conf);
+
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+    Cfg.GetItem("CAVisaDaemon", "StatusPerm", str_resul_conf);
+    StatusPerm=atol(str_resul_conf);
+
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+    Cfg.GetItem("CAVisaDaemon", "SemLectorBaseID", str_resul_conf);
+    SemLecBaseID=atol(str_resul_conf);
+
+	memset(str_resul_conf, 0, sizeof(str_resul_conf));
+    Cfg.GetItem("CAVisaDaemon", "SemLectorPerm", str_resul_conf);
+    SemLecPerm=atol(str_resul_conf);
+
+    /* Incializa los canales logicos para ese Centro Autorizador */
+    /* levantando las threads que correspondan                   */ 
+    for (Cant=1;Cant<=NroChannels;Cant++)
+    {
+		while ((CaLogi[i].libre!=OK) && (i<MAX_SVC))  // Busca un canal libre
+			i++;
+
+		if (CaLogi[i].libre!=OK)
+			break;
+
+		// Iniciliaza el CA, disparando los threads
+		CaLogi[i].libre=NOOK;
+		strcpy(CaLogi[i].Argumentos.NUA,Nua);
+		strcpy(CaLogi[i].Argumentos.NUP,Nup);
+	    strcpy(CaLogi[i].Argumentos.IDE,Ide);
+		ptrToken = strstr(CaLogi[i].Argumentos.IDE, "##");
+		if (ptrToken)
+		{
+			sprintf(sEnlace, "%02d", Cant);
+			memcpy(ptrToken, sEnlace, strlen(sEnlace));
+		}
+		pthread_mutex_init(&CaLogi[i].Argumentos.lock_status,NULL);
+		pthread_cond_init(&CaLogi[i].Argumentos.cond_status,NULL);
+		if (CaLogi[i].Argumentos.SVC != NULL)
+			free(CaLogi[i].Argumentos.SVC);
+		if ( strcmp(Commio, "tcp01") == 0 )
+			CaLogi[i].Argumentos.SVC = new TCP(Commio, iTOut, CON_CAB);
+		else
+		if ( strcmp(Commio, "tcp02") == 0 )
+			CaLogi[i].Argumentos.SVC = new TCP(Commio, iTOut, SIN_CAB);
+		else
+			CaLogi[i].Argumentos.SVC = new X25(Commio);
+		CaLogi[i].Argumentos.CodigoCa=CodigoCa;
+		iErrX25 = CaLogi[i].Argumentos.SVC->GetErrno();
+		iSysX25 = CaLogi[i].Argumentos.SVC->GetErSys();
+		LogAlarm.Put(0, "Ini[%03d]: Init: CA[%02d] Com[%s] Err[%d] Sys[%d]\n", i, CodigoCa, Commio, iErrX25, iSysX25);
+		if (!strcmp(UseCallUserData,"on"))
+		{
+			CaLogi[i].Argumentos.flag_CUData=OK;
+			strcpy(CaLogi[i].Argumentos.CallUserData[0],CallUserData[0]);
+			strcpy(CaLogi[i].Argumentos.CallUserData[1],CallUserData[1]);
+            CaLogi[i].Argumentos.SVC->setCodUserData(CallUserData);
+		}
+
+		if (!strcmp(UseTPDU,"on"))
+		{
+			CaLogi[i].Argumentos.flag_tpdu=OK;
+		    strcpy(CaLogi[i].Argumentos.NumberTPDU, NumberTPDU);
+		} 
+		else
+		{
+			CaLogi[i].Argumentos.flag_tpdu=NOOK;
+		}       
+		/* Abrir el Status para la sincronizacion de estas dos threads */
+		CaLogi[i].Argumentos.Status.Open(StatusBaseID+i,StatusPerm);
+		CaLogi[i].Argumentos.SemLector.Create(SemLecBaseID+i,SemLecPerm);
+		CaLogi[i].Argumentos.RQueueID=XQueueID;
+		CaLogi[i].Argumentos.RQueuePerm=XQueuePerm;
+		CaLogi[i].Argumentos.WQueueID=EQueueID;
+		CaLogi[i].Argumentos.WQueuePerm=EQueuePerm;
+       
+		/* Abre el SVC, de modo que el escritor no se vea forzado a hacerlo la primera vez */
+		iContReintentos = 0;
+		do
+		{
+			ret = CaLogi[i].Argumentos.SVC->Open(CaLogi[i].Argumentos.NUA, CaLogi[i].Argumentos.NUP, CaLogi[i].Argumentos.IDE);
+			iErrX25 = CaLogi[i].Argumentos.SVC->GetErrno();
+			iSysX25 = CaLogi[i].Argumentos.SVC->GetErSys();
+			LogAlarm.Put(0, "Ini[%03d]: Open: CA[%02d] Ret[%d] Err[%d] Sys[%d]\n", i, CodigoCa, ret, iErrX25, iSysX25);
+			if (ret!=OK)
+			{
+				LogAlarm.Put(0, "Ini[%03d]: ERROR Open: CA[%02d] NUA[%s:%s] IDE[%s]\n", i, CodigoCa, 
+							CaLogi[i].Argumentos.NUA, CaLogi[i].Argumentos.NUP, CaLogi[i].Argumentos.IDE);
+				re2 = CaLogi[i].Argumentos.SVC->Close();
+				iErrX25 = CaLogi[i].Argumentos.SVC->GetErrno();
+				iSysX25 = CaLogi[i].Argumentos.SVC->GetErSys();
+				LogAlarm.Put(0, "Ini[%03d]: Close: CA[%02d] Ret[%d] Err[%d] Sys[%d]\n", i, CodigoCa, re2, iErrX25, iSysX25);
+				iContReintentos++;
+				sleep(SLEEP_NOCANAL2);
+			}
+		} while ((ret!=OK)&&(iContReintentos<MAX_REINTENTOS));
+
+		if (ret==OK)
+		{
+			iContReintentos = 0;
+			do
+			{
+				CaLogi[i].Argumentos.idCaLogi=i;
+
+				/* Crea los atributos para los threads */
+				pthread_attr_init( &attrThread1 );
+				pthread_attr_setdetachstate( &attrThread1, PTHREAD_CREATE_DETACHED );
+				pthread_attr_init( &attrThread2 );
+				pthread_attr_setdetachstate( &attrThread2, PTHREAD_CREATE_DETACHED );
+
+				/* Lanza los threads */
+				rc1=pthread_create(&CaLogi[i].Lector  , &attrThread1, Lector  , (void *)&CaLogi[i].Argumentos);
+				rc2=pthread_create(&CaLogi[i].Escritor, &attrThread2, Escritor, (void *)&CaLogi[i].Argumentos);
+				if ((rc1!=OK) || (rc2!=OK))
+				{
+					LogAlarm.Put(0, "Ini[%03d]: ERROR Creando Threads. Lector[%d] Escritor[%d]\n", i, rc1, rc2);
+					rc1 = pthread_cancel(CaLogi[i].Lector);
+					rc2 = pthread_cancel(CaLogi[i].Escritor);
+					LogAlarm.Put(0,"Ini[%03d]: Resultado cancelacion thread Lector[%d] Escritor[%d]\n", i, rc1, rc2);
+					iContReintentos++;
+					sleep(SLEEP_NOTHREAD);
+					ret = NOOK;
+				}
+				else
+				{
+					LogAlarm.Put(0, "Ini[%03d]: Thread OK. CA[%02d] NUA[%s:%s] IDE[%s]\n", i, CodigoCa, 
+								CaLogi[i].Argumentos.NUA, CaLogi[i].Argumentos.NUP, CaLogi[i].Argumentos.IDE);
+					ret = OK;
+				}
+
+				/* Destruye los atributos de los threads */
+				pthread_attr_destroy( &attrThread1 );
+				pthread_attr_destroy( &attrThread2 );
+			
+			} while ((ret!=OK)&&(iContReintentos<MAX_REINTENTOS));
+		}
+		
+		if (iContReintentos>=MAX_REINTENTOS)
+		{
+			LogAlarm.Put(0, "Ini[%03d]: ATENCION: ERROR INICIANDO CANAL. CA[%02d] NUA[%s:%s]\n", 
+								i, CodigoCa, CaLogi[i].Argumentos.NUA, CaLogi[i].Argumentos.NUP );
+			CaLogi[i].libre=OK;
+		}
+
+	} /* end del for */  
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | Inicializar                                                |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion que inicializa los vectores de canales logicos,    |
+|                 | crea la cola de X25 y activa el log de actividades         | 
++-----------------+------------------------------------------------------------+
+*/
+int Inicializar()
+{
+	int i;
+	char str_resul_cfg[30];
+	char LogName[30];
+	int LogLevel;
+	long XQueueID,XQueuePerm; 
+	int ret;
+    long TimeOutOpen = 20;
+
+	for (i=0;i<MAX_SVC;i++)
+	{
+		CaLogi[i].libre=OK;
+		CaLogi[i].Argumentos.NUA[0]=0;
+		CaLogi[i].Argumentos.NUP[0]=0;
+		CaLogi[i].Argumentos.IDE[0]=0;
+		CaLogi[i].Argumentos.SVC=NULL;
+		CaLogi[i].Argumentos.CodigoCa=NOOK;
+	}
+
+	/* Abre el Log para el proceso general */
+	memset(str_resul_cfg, 0, sizeof(str_resul_cfg));
+	Cfg.GetItem("CAVisaDaemon", "LogName", str_resul_cfg);
+	strcpy(LogName,str_resul_cfg);
+
+	memset(str_resul_cfg, 0, sizeof(str_resul_cfg));
+	Cfg.GetItem("CAVisaDaemon", "LogLevel", str_resul_cfg);
+	LogLevel=atoi(str_resul_cfg);
+	
+	LogAlarm.Open(LogName);
+	LogAlarm.SetLevel(LogLevel);
+	LogAlarm.Put(0,"Com[XXX]: Comienzo [%s] - %s", NUM_VERSION, currentTimeLog() );
+
+	memset(str_resul_cfg, 0, sizeof(str_resul_cfg));
+	Cfg.GetItem("CAVisaDaemon", "QueueID", str_resul_cfg);
+	XQueueID=atol(str_resul_cfg);
+	
+	memset(str_resul_cfg, 0, sizeof(str_resul_cfg));
+	Cfg.GetItem("CAVisaDaemon", "QueuePerm", str_resul_cfg);
+	XQueuePerm=atol(str_resul_cfg);
+
+	memset(str_resul_cfg, 0, sizeof(str_resul_cfg));
+	if (Cfg.GetItem("General", "OpenTimeout", str_resul_cfg) == 0)
+	{
+		TimeOutOpen=atol(str_resul_cfg); 
+	}
+
+	LogAlarm.Put(0, "Com[XXX]: Crea cola. Id[%ld] Perm[%d]\n", XQueueID, XQueuePerm);
+	ret=XQueue.Create(XQueueID,XQueuePerm);
+	if (ret==NOOK)
+	{
+		ret = XQueue.GetErrno();
+		if (ret==EEXIST)
+		{
+			LogAlarm.Put(0,"Com[XXX]: Cola ya creada [%d] Se abre\n", ret);
+			ret=XQueue.Open(XQueueID, TimeOutOpen);
+			if (ret==NOOK)
+			{
+				LogAlarm.Put(0,"Com[XXX]: Error (%d) abriendo cola X.25\n", XQueue.GetErrno());
+				exit(1);
+			}
+		}
+		else
+		{
+			LogAlarm.Put(0,"Com[XXX]: Error [%d] Creando Cola! - Abortando\n", ret);
+			exit(1);
+		}
+	}
+
+	LogAlarm.Put(0,"Com[XXX]: Cola Creada\n");
+
+	/* Control de ejecucion */
+	pthread_t pThread;
+	ret=pthread_create(&pThread, NULL, ControlEjecucion, NULL);
+	LogAlarm.Put(0, "Com[XXX]: Control Ejecucion. Err[%d]\n", ret);
+
+	/* Abre objeto CACS */
+	memset(str_resul_cfg, 0, sizeof(str_resul_cfg));
+	Cfg.GetItem("CACStatVisa", "ShMemID", str_resul_cfg);
+	LogAlarm.Put(0, "Com[XXX]: Abre objeto CACS. Id[%ld]\n", atol(str_resul_cfg) );
+	while (CACS.Open(atol(str_resul_cfg))==NOOK)
+	{
+		if (CACS.GetErrno()!=ENOENT)
+		{
+			LogAlarm.Put(0, "Com[XXX]: Error (%d) al abrir CACS\n", CACS.GetErrno());
+			exit(1);
+		}
+	}
+	LogAlarm.Put(0,"Com[XXX]: Arranque OK\n");
+
+	return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | PedirInformacion                                           |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Obtiene informacion del estado de los canales              |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+void PedirInformacion(char *szRespuesta)
+{
+	typedef struct ST_CANALES
+	{	
+		int iConfigurados;
+		int iCreados;
+		int iActivos;
+		int iBloqueados;
+	} ST_CANALES;
+
+	int iCont, iAuxiliar;
+	char szBusqueda[256];
+	char szResultado[256];
+	char szAux[1024];
+
+	ST_CANALES stCanales[MAX_SVC];
+
+	for (iCont=0; iCont<MAX_SVC; iCont++)
+	{
+		stCanales[iCont].iConfigurados = 0;
+		stCanales[iCont].iCreados      = 0;
+		stCanales[iCont].iActivos      = 0;
+		stCanales[iCont].iBloqueados   = 0;
+
+		sprintf(szBusqueda, "NroChannels%02d", iCont);
+		memset(szResultado, 0, sizeof(szResultado));
+		if (Cfg.GetItem("CAVisaDaemon", szBusqueda, szResultado) == 0)
+		{
+			stCanales[iCont].iConfigurados = atoi(szResultado);
+			for (iAuxiliar=0; iAuxiliar<MAX_SVC; iAuxiliar++)
+			{
+				if ( (CaLogi[iAuxiliar].libre != OK) && 
+				     (CaLogi[iAuxiliar].Argumentos.CodigoCa == iCont) )
+				{
+					stCanales[iCont].iCreados++;
+					if (CaLogi[iAuxiliar].Argumentos.OnLineLector==1)
+					{
+						stCanales[iCont].iActivos++;
+					}
+					else
+					{
+						stCanales[iCont].iBloqueados++;
+					}
+				}
+			}
+		}
+	}
+	for (iCont=0; iCont<MAX_SVC; iCont++)
+	{
+		if (stCanales[iCont].iConfigurados > 0)
+		{
+			sprintf(szAux, "%02d-%02d-%02d-%02d-%02d#",	
+							iCont, 
+							stCanales[iCont].iConfigurados,
+							stCanales[iCont].iCreados,
+							stCanales[iCont].iActivos,
+							stCanales[iCont].iBloqueados);
+			strcat(szRespuesta, szAux);
+		}
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | main                                                       |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion principal de la aplicacion                         |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+main()
+{  
+	int  errs,ret;
+	char msg_str[300];
+	char szRespuesta[1024];
+
+	Inicializar();
+	errs=0;
+	while (errs<MAX_QERRS)
+	{
+		ret=XQueue.GetMsg(TYPE_MSG_CONF,msg_str,sizeof(msg_str));
+		if (ret==NOOK)
+		{
+			errs++;
+			LogAlarm.Put(0,"Dsp[XXX]: Error en cola [%d] - ConErrores [%d]\n",
+			XQueue.GetErrno(),errs);
+			continue;
+		}
+
+		/* Procesar el mensaje */
+		errs=0;
+		msg_str[3] = 0;
+
+		switch (msg_str[0])
+		{
+			case CF_CANAL:
+				memset(szRespuesta, 0, sizeof(szRespuesta));
+				PedirInformacion(szRespuesta);
+				XQueue.SendMsg(98, szRespuesta, strlen(szRespuesta) );
+				break;
+			case ML_CANAL:
+			case UN_CANAL:
+				LogAlarm.Put(0,"Dsp[XXX]: Orden de Iniciar CA [%s]\n", msg_str);
+				InicializarCa(msg_str);
+				break;
+			default:
+				LogAlarm.Put(0,"Dsp[XXX]: mensaje desconocido [%s]\n",msg_str);
+		} 
+	}
+}
+
+
+
+	    
+
+
+
+

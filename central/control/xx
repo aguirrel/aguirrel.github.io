@@ -1,0 +1,7 @@
+    EXEC SQL
+         SELECT nro_caj_ca 
+         INTO   :nro_caj_ca
+         from cred_term
+         where nro_caj=:nro_caj
+         and   nro_ca=:nro_ca
+         and   cod_con_cie='0';

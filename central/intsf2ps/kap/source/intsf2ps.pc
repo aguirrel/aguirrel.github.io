@@ -1,0 +1,429 @@
+#ifdef OS_Linux
+#pragma pack(1)
+#endif
+
+/*
++------------------------------------------------------------------------------+
+|                   Copyright (C) 2005 - COTO CICSA                            |
++-----------------+------------------------------------------------------------+
+| F. Fuente       | intSFtoPS.pc                                               |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+| Descripcion     | Interface de envio de transacciones de pago de resumenes   |
+|                 | de TCI hacia People Soft                                   |
++-----------------+------------------------------------------------------------+
+| Condiciones     | El proceso debe ejecutarse luego del cierre de lote        | 
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+#include <stdio.h>
+#include <time.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdarg.h>
+
+EXEC SQL INCLUDE SQLCA;
+
+#define NOMBPROCESO "intsf2ps"
+#define NUMEVERSION	"Version 1.09 02/07/2008"
+
+#define FOK	0
+#define FIN	1
+#define SIG	2
+
+#define ARCHLOG	'L'
+#define ARCHIVO	'A'
+
+#define DIASMINDEF	0
+#define DIASMAXDEF	7
+
+/* Definiciones de Oracle */
+#define CPVAR(X)			X.arr 
+#define CPMEM(X)			X.arr[X.len] = 0
+#define SQLCODE				abs(sqlca.sqlcode)
+#define VAR_TO_STR( Y, X )  ( memcpy( Y, X.arr, X.len ), Y[X.len]=0x00 )
+#define STR_TO_VAR( Y, X )  ( Y.len = (unsigned short)strlen( X ), \
+                                   memcpy( Y.arr, X, Y.len ) )
+
+/* Prototipos de funciones */
+void pvFinLog(FILE **prLogStream);
+void pvLog( FILE *, char, int, const char *, ... );
+int  piIniLog(FILE **prLogStream, char * szNombreArchivo);
+
+EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR		vcCUSUARIO	 [ 1+1];
+	VARCHAR		vcFEC_CIE	 [ 8+1];
+	VARCHAR		vcNRO_CAJ_SF [ 3+1]; 
+	VARCHAR		vcNRO_TAR_12 [12+1];
+	VARCHAR		vcFEC_TRX	 [ 8+1];
+	VARCHAR		vcCOD_MON	 [ 3+1];
+	VARCHAR		vcCOD_EST	 [ 2+1];
+	VARCHAR		vcFEC_INI_TRX[14+1];
+	VARCHAR		vcFEC_FIN_TRX[14+1];
+	VARCHAR		vcNRO_TAR_16 [16+1];
+	VARCHAR		vcNRO_CAJ    [ 4+1];
+	VARCHAR		vcNRO_TRX    [ 4+1];
+	double		dbMONTO;
+	int			iDIASPROC;
+EXEC SQL END DECLARE SECTION;
+
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvIniLog                                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion para abrir el archivo de log                       |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+int piIniLog(FILE **prLogStream, char * szNombreArchivo)
+{
+	int iRet= 0;
+	char szArchivo[128];
+
+	if ((*prLogStream = fopen(szNombreArchivo, "at"))==NULL)
+	{
+		iRet = -1;
+	}
+	return (iRet);
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvFinLog                                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion para cerrar el archivo de log                      |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+void pvFinArch(FILE **prLogStream)
+{
+	if (*prLogStream)
+	{
+		fclose(*prLogStream);
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvLog                                                      |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion para escribir los mensajes en el archivo de log    |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+void pvLog( FILE *prLogStream, char cLog, int iCont, const char * szMascara, ... )
+{
+    char szBuffer[1500], szBuffer2[1500], szFecha[12], szHora[10];
+    va_list pcListaParametros;
+
+    struct tm *newtime;
+    time_t long_time;
+
+    /* Obtiene  la fecha y hora */
+    time( &long_time );                
+    newtime = localtime( &long_time ); 
+    sprintf(szFecha, "%02d/%02d/%04d", newtime->tm_mday, newtime->tm_mon+1, 
+			1900+newtime->tm_year);
+    sprintf(szHora, "%02d:%02d:%02d", newtime->tm_hour, newtime->tm_min, 
+			newtime->tm_sec);
+    
+    va_start( pcListaParametros, szMascara );
+
+	/* Guarda la información */
+    if( prLogStream )  
+    {               
+            if (cLog==ARCHLOG)
+			{
+				sprintf( szBuffer, "%10.10s %8.8s %s", szFecha, szHora, szMascara );
+            }
+			else
+			{
+				sprintf( szBuffer, "%s", szMascara );
+			}
+			vsprintf( szBuffer2, szBuffer, pcListaParametros );
+			fprintf( prLogStream, szBuffer2 );
+            fflush( prLogStream );
+    }
+
+	/* Finaliza el proceso si es error critico */
+	if ( ( iCont==FIN ) || ( iCont==FOK ) )
+	{
+		if ( prLogStream )
+		{
+			fclose(prLogStream);
+		}
+		exit(iCont);
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | main                                                       |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Proceso principal de la aplicacion                         |
+|                 | Parametros: [Fecha de las operaciones MMDD]                | 
+|                 | Ejemplo: ChecDif 0612                                      | 
++-----------------+------------------------------------------------------------+
+*/
+void main (int argc, char **argv)
+{
+	/* Definicion de variables */
+	int		iPar= 0;
+	int		iError= 0;
+	long	lReg = 0;
+	FILE	*fdLog = NULL;
+	char	szAuxil[64];
+	char	szLinea[512];
+	time_t	long_time;
+	struct	tm *newtime;
+    
+	/* Abre archivo de log */
+	time( &long_time );               
+	newtime = localtime( &long_time );	
+	sprintf(szLinea, "%s/log/%s%02d.log", getenv("HOME"), NOMBPROCESO, newtime->tm_mday);
+	if (piIniLog(&fdLog, szLinea))
+	{
+		printf("Error al abrir archivo de log %s\n", szLinea);
+		exit(1);
+	}
+	pvLog(fdLog, ARCHLOG, SIG, "Inicio de proceso [%s]\n", NUMEVERSION);
+
+	/* Verifica parametros */
+	if ( (argc<2) || (argc>3) || (strlen(argv[1])!=8) )
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error. Sintaxis: AAAAMMDD (Fecha Transaccion) [N] (Dias) \n");
+	}
+	else
+	{
+		sprintf(szLinea, "Parametros de ejecucion: ");
+		for (iPar=1; iPar<argc; iPar++)
+		{
+			strcat(szLinea, argv[iPar]);
+			strcat(szLinea, " ");
+		}
+		strcat(szLinea, "\n");
+		pvLog(fdLog, ARCHLOG, SIG, szLinea);
+
+		STR_TO_VAR(vcFEC_TRX, argv[1]);
+		if (argc == 2)
+		{
+			iDIASPROC = DIASMINDEF;	
+		}
+		else
+		{
+			if (atoi(argv[2]) > DIASMAXDEF)
+			{
+				iDIASPROC = DIASMAXDEF;
+			}
+			else
+			{
+				iDIASPROC = atoi(argv[2]);
+			}
+		}
+	}
+
+	/* Se conecta a BD */
+	STR_TO_VAR(vcCUSUARIO, "/");
+	EXEC SQL
+		CONNECT :vcCUSUARIO; 
+	
+	/* Verifica conexion */
+	if (SQLCODE!=0)
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al conectar a BD\n");
+	}
+	else
+	{
+		pvLog(fdLog, ARCHLOG, SIG, "Conexion establecida a BD\n");
+	}
+
+	/* Obtiene rango horario de transacciones a recuperar */
+	EXEC SQL
+		SELECT SUBSTR(TO_CHAR(TO_DATE(:vcFEC_TRX, 'YYYYMMDD')-:iDIASPROC, 'YYYYMMDD') || '030001', 1, 14) ,   
+			   SUBSTR(TO_CHAR(TO_DATE(:vcFEC_TRX, 'YYYYMMDD')+1         , 'YYYYMMDD') || '030000', 1, 14)
+		INTO :vcFEC_INI_TRX, :vcFEC_FIN_TRX
+		FROM DUAL;
+
+	/* Verifica resultado */
+	if (SQLCODE!=0)
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al recuperar fechas en BD\n");
+	}
+	else
+	{
+		CPMEM(vcFEC_INI_TRX);
+		CPMEM(vcFEC_FIN_TRX);
+		pvLog(fdLog, ARCHLOG, SIG, "Rango horario: [%s-%s]\n", CPVAR(vcFEC_INI_TRX), CPVAR(vcFEC_FIN_TRX));
+	}
+
+	/* Recupera todas las empresas y los dias de resguardo */
+	EXEC SQL
+		DECLARE CursorPagos CURSOR FOR
+			SELECT	SUBSTR(NRO_CAJ_SF, 3, 3) ,
+					SUBSTR(LPAD(RTRIM(NRO_TAR,' '), 20, '0') , 9, 12) ,
+					SUBSTR(LPAD(RTRIM(NRO_TAR,' '), 20, '0') , 5, 16) ,
+					SUBSTR(TO_CHAR(FEC_TRX,'YYYYMMDD'), 1, 8) ,    
+					SUBSTR(NVL(FEC_CIE,TO_CHAR(SYSDATE,'YYYYMMDD')), 1, 8) ,
+					DECODE(COD_MON, '032' , 'ARS',
+									'840' , 'USD') ,
+					DECODE(COD_EST, '00' , DECODE(COD_TRX , '09' , '35' , '80') ,
+									'02' , DECODE(COD_TRX , '09' , '35' , '80') ,
+									'04' , DECODE(COD_TRX , '09' , '35' , '80') , 
+									'10' , DECODE(COD_TRX , '09' , '35' , '80') , 
+									'43' , DECODE(COD_TRX , '09' , '35' , '80') ,
+									'45' , DECODE(COD_TRX , '09' , '35' , '80') ),
+					SUM(MONTO)/100 ,
+					SUBSTR(NRO_CAJ, 2, 4) ,
+					LPAD(NRO_TRX, 4, '0') 
+			FROM  CRED_TRX
+			WHERE COD_TAR = '30'
+			  AND COD_EST IN ( '00' , '02' , '04' , '10' , '43' , '45' ) 
+			  AND COD_TRX IN ( '08' , '09' )
+			  AND SUBSTR(TO_CHAR(FEC_TRX,'YYYYMMDD'),1,8)||SUBSTR(FEC_LOC,5,6) >= :vcFEC_INI_TRX
+			  AND SUBSTR(TO_CHAR(FEC_TRX,'YYYYMMDD'),1,8)||SUBSTR(FEC_LOC,5,6) <= :vcFEC_FIN_TRX
+			  AND FEC_VTACARD IS NOT NULL
+			GROUP BY NRO_CAJ_SF, NRO_TAR, FEC_TRX, FEC_CIE, COD_MON, NRO_CAJ, NRO_TRX,
+					DECODE(COD_EST, '00' , DECODE(COD_TRX , '09' , '35' , '80') ,
+									'02' , DECODE(COD_TRX , '09' , '35' , '80') ,
+									'04' , DECODE(COD_TRX , '09' , '35' , '80') , 
+									'10' , DECODE(COD_TRX , '09' , '35' , '80') , 
+									'43' , DECODE(COD_TRX , '09' , '35' , '80') ,
+									'45' , DECODE(COD_TRX , '09' , '35' , '80') )
+			ORDER BY 4 , 5 , 1, 9, 10;
+
+	/* Abre el cursor */
+	pvLog(fdLog, ARCHLOG, SIG, "Abre cursor de registros\n");
+
+	EXEC SQL
+		OPEN CursorPagos;
+
+	if (SQLCODE!=0)
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al abrir cursor [%d]\n", SQLCODE);
+	}
+	else
+	{
+		pvLog(fdLog, ARCHLOG, SIG, "Inicio recuperacion de registros\n");
+	}
+
+	/* Inserta los registros */
+	do
+	{
+		EXEC SQL
+			FETCH CursorPagos INTO
+				:vcNRO_CAJ_SF, 
+				:vcNRO_TAR_12,
+				:vcNRO_TAR_16,
+				:vcFEC_TRX,
+				:vcFEC_CIE,
+				:vcCOD_MON,
+				:vcCOD_EST,
+				:dbMONTO,
+				:vcNRO_CAJ,
+				:vcNRO_TRX;
+
+		iError = SQLCODE;
+		
+		switch (iError)
+		{
+			case 0:
+				lReg++;
+
+				CPMEM(vcNRO_CAJ_SF);
+				CPMEM(vcNRO_TAR_12);
+				CPMEM(vcNRO_TAR_16);
+				CPMEM(vcFEC_TRX);
+				CPMEM(vcFEC_CIE);
+				CPMEM(vcCOD_MON);
+				CPMEM(vcCOD_EST);
+				CPMEM(vcNRO_CAJ);
+				CPMEM(vcNRO_TRX);
+				
+				sprintf(szLinea, "Reg %06ld: [%s %s %s %s %s %s %s %s %012.02f]  ", 
+															lReg,
+															CPVAR(vcNRO_CAJ_SF),
+															CPVAR(vcNRO_CAJ),
+															CPVAR(vcNRO_TRX),
+															CPVAR(vcNRO_TAR_16),
+															CPVAR(vcFEC_TRX),
+															CPVAR(vcFEC_CIE),
+															CPVAR(vcCOD_MON),
+															CPVAR(vcCOD_EST),
+															dbMONTO);													
+
+				EXEC SQL
+					INSERT INTO PS_COT_TCI_SF_PAGO
+						(EMPRESA,
+						 COT_COD_SUCURSAL,
+						 RECON_REF_ID,
+						 COT_NRO_TARJETA,
+						 COT_TCI_COPE,
+						 VALUE_DT,
+						 CURRENCY_CD,
+						 RECON_TRAN_AMT,
+						 ASOFDATE,
+						 PROCESS_INSTANCE,
+						 COT_CTERMINL,
+						 TRANSACTION_CODE)
+					VALUES
+						('900',
+						 :vcNRO_CAJ_SF,
+						 :vcNRO_TAR_12,
+						 :vcNRO_TAR_16,
+						 :vcCOD_EST,
+						 TO_DATE(:vcFEC_TRX, 'YYYYMMDD'),
+						 :vcCOD_MON,
+						 :dbMONTO,
+						 TO_DATE(:vcFEC_CIE, 'YYYYMMDD'),
+						 '0',
+						 :vcNRO_CAJ,
+						 :vcNRO_TRX);
+					
+				if (SQLCODE)
+				{
+					if (SQLCODE==1)
+					{
+						sprintf(szAuxil, "Registro ya insertado\n");
+					}
+					else
+					{
+						sprintf(szAuxil, "Error al insertar [%d]\n", SQLCODE);
+						iError = SQLCODE;
+					}
+				}
+				else
+				{
+					sprintf(szAuxil, "OK\n");
+				}
+				strcat(szLinea, szAuxil);
+				pvLog(fdLog, ARCHLOG, SIG, szLinea);
+				break;
+
+			case 1403:
+				pvLog(fdLog, ARCHLOG, SIG, "Fin recuperacion de registros\n");
+				break;
+
+			default:
+				pvLog(fdLog, ARCHLOG, SIG, "Error al recuperar registros [%d]\n", SQLCODE);
+		}
+	} while (iError==0);
+
+	/* Cierra el cursor */
+	EXEC SQL
+		CLOSE CursorPagos;
+								
+	/* Retorna el resultado */
+	if ((iError==0)||(iError==1403))
+	{
+		EXEC SQL
+			COMMIT;
+
+		pvLog(fdLog, ARCHLOG, FOK, "Fin OK de proceso\n\n");
+	}
+	else
+	{
+		EXEC SQL
+			ROLLBACK;
+
+		pvLog(fdLog, ARCHLOG, FIN, "Fin ER de proceso\n\n");
+	}
+} 
+
+

@@ -1,0 +1,209 @@
+
+/*                ElimDupl.pc                                           */
+
+/* Se eliminan las transacciones duplicadas de la base de datos. Se buscan */
+/* transacciones con igual: nro. de caja, nro de sucursal, nro de ticket   */
+/* monto, nro de tarjeta.                                                  */
+  
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define USERID_LEN 20
+#define PASSWD_LEN 20
+
+typedef struct
+{
+ char  userid[USERID_LEN+1];
+ char  passwd[PASSWD_LEN+1];
+} str_login;
+
+ 
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR    userid[20];
+    VARCHAR    passwd[20];
+    VARCHAR    nro_caj[5];
+    VARCHAR    caja[5];
+    VARCHAR    envio[2];
+    VARCHAR    nro_caj_sf[5];
+    VARCHAR    monto[12];
+    VARCHAR    fecha[4];
+    VARCHAR    fec_loc[10];
+    VARCHAR    nro_tar[20];
+    VARCHAR    cod_tar[2];
+    VARCHAR    nro_ca[2];
+    VARCHAR    nro_tic[4];
+    VARCHAR    cod_est[2];
+    VARCHAR    descrip[30];
+    VARCHAR    fec_env[10];
+    VARCHAR    fec_rta[10];
+    int        cont;
+
+EXEC SQL END DECLARE SECTION;
+
+
+int init()
+{
+  str_login   login_data;
+  int         Sqlerror;
+     
+  strcpy(login_data.userid, "u601");
+  strcpy(login_data.passwd, "u601");
+  strcpy((char *)userid.arr, login_data.userid);
+  userid.len=strlen(login_data.userid);
+  strcpy((char *)passwd.arr, login_data.passwd);
+  passwd.len=strlen(login_data.passwd);
+  EXEC SQL
+     CONNECT :userid IDENTIFIED BY :passwd;
+  if (sqlca.sqlcode!=0)
+   { Sqlerror=sqlca.sqlcode;
+     return -1;
+   }
+  Sqlerror=0;
+  return 0;   
+}
+  
+   
+void main(int argc, char *argv[])
+{
+ char   ing_suc[6];
+ char   ing_tar[10];
+ char   ing_ca[10];
+ FILE*    fd;
+ time_t  hIni;
+ 
+ if (argc!=3)
+  {
+   printf("Uso de ElimDupl <Numero de sucursal Centro Autorizador> \n");
+   exit(0);
+ 
+  }
+
+ strcpy(ing_suc, argv[1]);
+ strcpy((char *)nro_caj_sf.arr, ing_suc);
+ nro_caj_sf.len=strlen(ing_suc);
+
+ printf("suc: [%s]\n", ing_suc);
+
+ strcpy(ing_ca, argv[2]);
+ strcpy((char *)nro_ca.arr, ing_ca);
+ nro_ca.len=strlen(ing_ca);
+
+ init();
+
+ fd=fopen("/online/log/duplic.log", "w");
+ hIni=time(&hIni);
+ fprintf(fd,"ElimDupl:: INICIO. %s\n", asctime(localtime(&hIni)));
+ fprintf(fd,"ElimDupl:: Suc [%s] CA [%s] \n", nro_caj_sf.arr, nro_ca.arr);
+ 
+/* Creo cursor para cada caja de la sucursal */
+
+ EXEC SQL
+ DECLARE cursor_caj CURSOR FOR
+      SELECT nro_caj
+      FROM  cred_term 
+      WHERE nro_caj_sf=:nro_caj_sf AND
+            nro_ca=:nro_ca
+      ORDER BY nro_caj;
+ 
+ EXEC SQL
+    OPEN cursor_caj;
+ 
+ EXEC SQL
+    FETCH cursor_caj
+    INTO :nro_caj;
+ 	  
+ while (sqlca.sqlcode==0)
+ { 
+    /* Creo otro cursor para las transacciones de esa caja */
+    fprintf(fd, "ElimDupl:: nro_caja [%s] \n", nro_caj.arr); 
+    printf("ElimDupl:: nro_caja [%s] \n", nro_caj.arr); 
+
+    EXEC SQL
+    DECLARE cursor_trx CURSOR FOR
+        SELECT nro_caj, nro_tar, monto, nro_tic
+        FROM cred_trx
+        WHERE nro_caj=:nro_caj and nro_ca=:nro_ca;
+
+   EXEC SQL
+      OPEN cursor_trx;
+
+   EXEC SQL
+      FETCH cursor_trx
+      INTO :nro_caj, :nro_tar, :monto, :nro_tic;
+
+   while (sqlca.sqlcode==0)
+   {
+   
+    /* Busca duplicada */
+
+    EXEC SQL
+        SELECT count(*) 
+        INTO :cont 
+        FROM cred_trx 
+        WHERE nro_ca=:nro_ca and 
+              nro_tar=:nro_tar and monto=:monto;
+        
+      if (cont>1)
+      {
+
+           fprintf(fd,"ElimDupl:: contador: %d \n", cont);
+
+           EXEC SQL
+               DECLARE cursor_tar CURSOR FOR
+               SELECT nro_tar, monto, cod_est, nro_caj, mod_env, fec_loc, 
+                      fec_env, fec_rta
+               FROM cred_trx
+               WHERE nro_tar=:nro_tar and monto=:monto;
+
+
+           EXEC SQL
+               OPEN cursor_tar;
+
+           EXEC SQL
+               FETCH cursor_tar
+               INTO :nro_tar, :monto, :cod_est, :caja, :envio, :fec_loc, 
+                    :fec_env, :fec_rta;
+
+
+           while (sqlca.sqlcode==0)
+           {
+
+               fprintf(fd, "%s %s %s %s %s %s %s %s\n", nro_tar.arr, 
+                                          monto.arr, 
+                                          cod_est.arr,  caja.arr, 
+                                          envio.arr, fec_loc.arr,
+                                          fec_env.arr, fec_rta.arr);
+
+               EXEC SQL
+                   FETCH cursor_tar
+                   INTO :nro_tar, :monto, :cod_est, :caja, :envio, :fec_loc, 
+                        :fec_env, :fec_rta;
+
+           } 
+
+      }
+
+      EXEC SQL
+          FETCH cursor_trx
+          INTO :nro_caj, :nro_tar, :monto, :nro_tic;
+
+  } /* Por las transacciones */
+
+  EXEC SQL
+      CLOSE cursor_trx;
+
+  EXEC SQL
+     FETCH cursor_caj
+     INTO :nro_caj;
+
+ }  /* Por las cajas */
+
+ EXEC SQL
+      CLOSE cursor_caj; 
+  return;
+ 
+}	 

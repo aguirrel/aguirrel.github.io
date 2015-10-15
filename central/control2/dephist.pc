@@ -1,0 +1,186 @@
+/************************************************************************/
+/*									*/
+/* dephist.pc	    : Funcion SQL para realizar la depuracion           */
+/*		      de la tabla hist_trx. 				*/
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 21/08/97						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN       20
+#define PASSWD_LEN       20
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+
+
+int open_db(str_login *data);
+void init();
+void getFechaActual(char *fecha);
+
+EXEC SQL INCLUDE SQLCA;
+
+int               SqlErrno;
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR     nro_caj[5];
+    VARCHAR     mes[2];
+EXEC SQL END DECLARE SECTION;
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy(userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy(passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+
+    if (sqlca.sqlcode!=OK)
+        {
+	SqlErrno=sqlca.sqlcode;
+	return NOOK;
+        }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+void getFechaActual(char *hora)
+{
+char fecha[11];
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d%02d%02d%02d%02d", newtime->tm_mday, 
+	newtime->tm_mon+1, newtime->tm_hour, newtime->tm_min, 
+	newtime->tm_sec);
+
+    sprintf(hora, "%2.2s:%2.2s:%2.2s", &fecha[4], &fecha[6], &fecha[8]); 
+
+}
+
+
+main(int argc, char *argv[])
+{
+int               code;
+char              szmes[3];
+long              lmes_dep, lmes_act, aux, lmes_config;
+
+    init();
+
+    if (argc!=3)
+    {
+       printf("\tUso: <dephist XX Y>\n");
+       printf("(XX: nro de mes a depurar)\n");
+       printf("(Y: cant de meses a depurar)\n");
+       printf("(ej. : dephist 12 2, depura el mes 10)\n");
+       exit(0);
+    }
+
+    lmes_act=atoi(argv[1]);
+    lmes_config=atoi(argv[2]);
+
+    aux=lmes_act-lmes_config;
+    if (aux<=0)
+    {
+       lmes_dep=12+aux;
+    }
+    else
+    {
+       lmes_dep=aux;
+    }
+
+    sprintf(szmes, "%02d", lmes_dep);
+
+    strcpy(mes.arr,szmes);
+    mes.len=strlen(szmes);
+
+    printf("dephist: mes a depurar: %s\n", mes.arr);  
+    
+    EXEC SQL
+        DECLARE cursor_term CURSOR FOR
+            SELECT distinct(nro_caj)
+            FROM cred_term
+            ORDER BY nro_caj;
+
+    EXEC SQL
+        OPEN cursor_term;
+
+    EXEC SQL 
+        FETCH cursor_term
+           INTO :nro_caj;
+
+    code = sqlca.sqlcode;
+
+    while(code==0)
+       {
+    
+       printf("Numero de caja a depurar [%s] \r", nro_caj.arr);
+       fflush(stdout);
+
+       EXEC SQL
+           DELETE FROM hist_trx
+              WHERE nro_caj = :nro_caj AND
+              TO_CHAR(TO_DATE(fec_loc, 'MMDDHH24MISS'), 'MM') = :mes;
+
+       if((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403))
+         {
+            printf("Error en Delete (Tabla hist_trx) %ld\n",sqlca.sqlcode);
+         }
+ 
+       EXEC SQL
+           COMMIT;
+ 
+       EXEC SQL 
+           FETCH cursor_term
+              INTO :nro_caj;
+     
+       code = sqlca.sqlcode;
+
+       } /* Fin del while ppal. */
+
+    EXEC SQL
+        CLOSE cursor_term;
+    
+    printf("\nDepuracion Finalizada \n");
+   
+    return OK;
+
+}

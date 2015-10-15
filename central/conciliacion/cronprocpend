@@ -1,0 +1,16 @@
+#PATH=/usr/bin:/etc:/usr/sbin:/usr/ucb:/usr/bin/X11:/sbin:/home/oracle/bin:.
+
+ORACLE_HOME=/u01/app/oracle/product/734
+ORACLE_SID=ONLINE
+EDITOR=vi
+PATH=/usr/bin:/etc:/usr/sbin:/usr/ucb:/usr/bin/X11:/sbin:$ORACLE_HOME/bin:.
+
+export PATH
+export EDITOR
+export ORACLE_HOME
+export ORACLE_SID
+
+cd /online/bin
+ 
+echo "Comienza proceso procpen: " > ../log/procpen.log
+./procpen >> ../log/procpen.log

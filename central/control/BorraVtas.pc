@@ -1,0 +1,162 @@
+/*************************************************************************/
+/*                                                                       */
+/* BorraVtas        : Borra Vtatot y SucVtaTot por fecha                 */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 15/07/98                                           */
+/* Compilador       : C++                                                */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR     FechaDesde[4];
+    VARCHAR     FechaHasta[4];
+
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+EXEC SQL END DECLARE SECTION;
+
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+
+
+void main (int argc, char *argv[])
+{
+  FILE *fd;
+  char szFecAuxi[5];
+  char szFecAuxi2[3];
+  time_t  hIni;
+
+  if (argc < 2)
+  {
+    printf("\nUso: %s <DDMM> para trabajar sobre una fecha.\n\n", argv[0]);
+    printf("     %s <DDMM> <DDMM> para trabajar entre fechas.\n\n", argv[0]);
+    exit(-1);
+  }
+
+  printf("Apertura del archivo BorraVtas.log\n\n");
+  if ( (fd=fopen("/online/log/BorraVtas.log", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura del archivo BorraVtas.log\n");
+    exit(-1);
+  }
+
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+
+   hIni=time(&hIni);
+   printf("\nInicio: %s\n", asctime(localtime(&hIni)) );
+   fprintf(fd, "\nInicio: %s\n", asctime(localtime(&hIni)) );
+
+  /* Guardo la fecha */
+  strcpy( (char*) FechaDesde.arr, argv[1]);
+  FechaDesde.len = strlen( (char*) FechaDesde.arr);
+
+  if ( 3 == argc )
+  {
+	strcpy((char*) FechaHasta.arr, argv[2]);
+	FechaHasta.len = strlen( (char*) FechaHasta.arr );
+  }
+  else
+  {
+	strcpy( (char*) FechaHasta.arr, argv[1] );
+	FechaHasta.len = strlen( (char*) FechaHasta.arr );
+  }
+
+  printf("\nComienza proceso de actualizacion...\n");
+  fprintf(fd, "\nComienza proceso de actualizacion...\n");
+
+        EXEC SQL
+           DELETE FROM VtaTot
+           WHERE substr(fec_vtacard, 5, 4) >= :FechaDesde 
+	     AND substr(fec_vtacard, 5, 4) <= :FechaHasta; 
+    
+        EXEC SQL
+          COMMIT;
+        
+        EXEC SQL
+           DELETE FROM SucVtaTot
+           WHERE substr(fec_vtacard, 5, 4) >= :FechaDesde 
+	     AND substr(fec_vtacard, 5, 4) <= :FechaHasta; 
+
+        EXEC SQL
+           COMMIT;
+
+
+  printf("\nSaliendo del programa...\n");
+  fprintf(fd, "\nSaliendo del programa...\n");
+  hIni=time(&hIni);
+  printf("\nFin: %s\n", asctime(localtime(&hIni)) );
+  fprintf(fd, "\nFin: %s\n", asctime(localtime(&hIni)) );
+  fclose(fd);
+}
+
+

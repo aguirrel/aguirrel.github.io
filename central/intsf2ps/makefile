@@ -1,0 +1,56 @@
+#Definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+CC=cc
+CCFLG= -DOS_$(OSTYPE) -w $(ALLINC) -g
+
+CCC=cc
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) -g
+
+PCC=proc
+PCCINC=${ORACLE_HOME}/proc/lib
+
+PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=syntax lines=yes ireclen=132
+
+# Librerias de la base de datos relacional (ORACLE):
+
+# ORACLE 7.3.2.3 (aix 4.1.4)
+ORACLELIBS=-L${ORACLE_HOME}/lib -lclntsh -lcore9 -lnls9 -lclient9 -lgeneric9 -lcommon9 -lsql9 
+
+#Librerias propias
+USRLIBS=-L$(LFILES) 
+
+# Librerias del sistema
+#SYSLIBS=-lc -lm -lld /lib/crt0.o
+#SYSLIBS=-lc -lm -lld 
+
+ALLIBS=$(ORACLELIBS) $(USRLIBS) $(SYSLIBS)
+
+.SUFFIXES: .pc .C
+
+.pc.o:
+	$(PCC) $(PCCFLG) iname=$<
+	$(CC) $(CCFLG) -c $*.c
+	@rm $*.c
+
+.C.o:
+	$(CCC) $(CCCFLG) -c $< -o $*.o
+
+all: intsf2ps
+
+clean:
+	-rm *.o *.a *.c
+
+$(OFILES)intsf2ps.o: intsf2ps.o
+	$(PCC) $(PCCFLG) iname=intsf2ps.pc
+	$(CC)  $(CCFLG) -c intsf2ps.c -o$(OFILES)intsf2ps.o
+	rm intsf2ps.c
+	rm intsf2ps.o
+
+intsf2ps: $(OFILES)intsf2ps.o
+	$(CC) $(CCFLG) $(ALLIBS) $(OFILES)intsf2ps.o \
+	-o $(EFILES2)intsf2ps
+
+	mv intsf2ps $(EFILES)
+

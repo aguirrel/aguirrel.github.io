@@ -1,0 +1,29 @@
+char strMsgInt[1024];
+char	szBitmap[8];
+
+memset(szBitmap, 0, sizeof(szBitmap));
+memset(strMsgInt,0x00,sizeof(strMsgInt));
+
+szBitmap[0] = 0x11;
+szBitmap[1] = 0x00;
+szBitmap[2] = 0x00;
+szBitmap[3] = 0x10;
+szBitmap[4] = 0x00;
+szBitmap[5] = 0x10;
+szBitmap[6] = 0x00;
+szBitmap[7] = 0x00;
+
+memcpy(strMsgInt, "6000030000", 10);
+iIndice += 10;
+memcpy(strMsgInt + iIndice, "0800", 4);
+iIndice += 4;
+memcpy(strMsgInt + iIndice, szBitmap,8); 
+iIndice += 8;
+memcpy(strMsgInt + iIndice, "990000", 6);
+iIndice += 6;
+memcpy(strMsgInt + iIndice, "1119120000", 10);	
+iIndice += 10;
+memcpy(strMsgInt + iIndice, "003", 3);
+iIndice += 3;
+memcpy(strMsgInt + iIndice, "80000011", 8);
+iIndice += 8;

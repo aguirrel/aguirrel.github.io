@@ -1,0 +1,478 @@
+/************************************************************************/
+/*									*/
+/* gencie.pc	    : Listado de transacciones aprobadas en el          */
+/*		      Cierre de Lote de Tarjetas.                       */
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 20/06/97						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+ 
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+extern int	SqlErrno;
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+     
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR	nro_caj[5];
+    VARCHAR	nro_caj_sf[5];
+    VARCHAR	monto[12];
+    VARCHAR	fecha[4];
+    VARCHAR	fec_loc[10];
+    VARCHAR	nro_tar[20];
+    VARCHAR	cod_tar[2];
+    VARCHAR	nro_ca[2];
+    VARCHAR	descrip[30];
+    VARCHAR	cod_trx[2];
+    VARCHAR     nro_lot[4];
+    VARCHAR     fec_rta[10]; 
+EXEC SQL END DECLARE SECTION;
+
+void getFechaActual(char *fecha)
+{
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d/%02d/%02d", newtime->tm_mday, 
+	           newtime->tm_mon+1, newtime->tm_year);
+}
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+	  SqlErrno=sqlca.sqlcode;
+	  return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+
+
+void main (int argc, char *argv[])
+{
+FILE    *fcie, *ftot, *fd;
+char    fec[15];
+int	lcont_vta;
+int	lcont_anu;
+int	lcont_dev;
+int     lmonto;
+double  dmonto;
+int     lmonto_acum_vta;
+int     lmonto_acum_anu;
+int     lmonto_acum_dev;
+double  dmonto_acum_vta;
+double  dmonto_acum_anu;
+double  dmonto_acum_dev;
+int     lmonto_tot_vta=0;
+int     lmonto_tot_anu=0;
+int     lmonto_tot_dev=0;
+double  dmonto_tot_vta;
+double  dmonto_tot_anu;
+double  dmonto_tot_dev;
+int	lcont_tot_vta=0;
+int	lcont_tot_anu=0;
+int	lcont_tot_dev=0;
+char    filename[30];
+char    szfecha[5];
+char    szcod_tar[3];
+char    sznro_caj_sf[6];
+int     titulo_caja;
+int     nro_pag=1;
+int     cont_linea=5;
+char    fecha_aux[6];
+int     cont_cajas_proc=0;
+int     cont_cajas_sin_mov=0;
+
+     if (argc!=3)
+     {
+        printf("Uso: gencie <nro de sucursal,  cod de tarjeta>\n");
+        exit(0);
+     }
+ 
+     strcpy(sznro_caj_sf, argv[1]);
+     printf("numero de sucursal: %s\n", sznro_caj_sf);
+     strcpy((char *)nro_caj_sf.arr, sznro_caj_sf);
+     nro_caj_sf.len=strlen(sznro_caj_sf);
+
+     strcpy(szcod_tar, argv[2]);
+     printf("codigo de tarjeta: %s\n", szcod_tar);
+     strcpy((char *)cod_tar.arr, szcod_tar);
+     cod_tar.len=strlen(szcod_tar);
+
+     init();
+
+     if ((fd=fopen("/online/log/fecha.dat", "r"))==NULL)
+     {
+        printf("Error en apertura de archivo: fecha.dat\n");
+        exit(0);
+     }
+
+     fscanf(fd, "%s", szfecha);
+     printf("Fecha leida: %s\n", szfecha);
+
+     strcpy((char *)fecha.arr, szfecha);
+     fecha.len=strlen(szfecha);
+
+     EXEC SQL
+         SELECT nro_ca, descrip
+         INTO :nro_ca, :descrip
+         FROM cred_tarj
+         WHERE cod_tar=:cod_tar;
+
+
+     strcpy(filename, "/online/chec/suc");
+     strcat(filename, &sznro_caj_sf[3]);
+     strcat(filename, "/");
+     strncat(filename, (char *)descrip.arr, 3);
+     strcat(filename, "cieh.");
+     strcat(filename, szfecha);
+
+     if ((fcie=fopen(filename, "w"))==NULL)
+     {
+         printf("Error en apertura de archivo [%s]\n", filename);
+         exit(0);
+     }
+
+     printf("Generando: [%s]\n", filename);
+
+     strcpy(filename, "/online/chec/suc");
+     strcat(filename, &sznro_caj_sf[3]);
+     strcat(filename, "/");
+     strncat(filename, (char *)descrip.arr, 3);
+     strcat(filename, "toth.");
+     strcat(filename, szfecha);
+
+     if ((ftot=fopen(filename, "w"))==NULL)
+     {
+         printf("Error en apertura de archivo [%s]\n", filename);
+         exit(0);
+     }
+
+     printf("Generando: [%s]\n", filename);
+   
+     fprintf(fcie, "\n\tCOTO C.I.C.S.A.\t\t\tPGM: gencie\n"); 
+     getFechaActual(fec);
+     fprintf(ftot, "\n\tCOTO C.I.C.S.A.\t\t\t\tFECHA: %s\n", fec); 
+     printf("Fecha actual: %s\n", fec);
+     fprintf(fcie, "\tFecha: %s\n", fec);
+     fprintf(ftot, "\tPGM: gencie \t\t\t\tPAGINA: %d\n", nro_pag);
+
+     fprintf(fcie, "\n\n\t\tListado de detalles por tarjeta\n"); 
+
+     memset(fecha_aux, '\0', 6);
+     strncpy(fecha_aux, szfecha, 2);
+     strcat(fecha_aux, "/");
+     strncat(fecha_aux, &szfecha[2], 2);
+
+     fprintf(ftot, "\n\n\t\tTOTAL DE VENTAS POR CAJA TARJETA %.15s AL %s\n",
+                   descrip.arr, fecha_aux); 
+     fprintf(ftot, "\n\n\t\t\tFECHA DE PRESENTACION %s\n", fec);
+ 
+ 
+     printf("CA: %s\n", nro_ca.arr);
+
+     fprintf(fcie, "\n\n\t\tTarjeta: %s\n", descrip.arr); 
+  
+     fprintf(fcie, "\n\tSUCURSAL: %3s\n", &nro_caj_sf.arr[2]); 
+
+
+     fprintf(ftot, "\n\t----------------------------------------------"
+                   "-------------------------\n");
+     fprintf(ftot, "\tSUCURSAL: %3s\t\t\tTOTAL $\t\tTOTAL TRANSACCIONES\n", 
+                   &nro_caj_sf.arr[2]); 
+     fprintf(ftot, "\t----------------------------------------------"
+                   "-------------------------\n");
+
+     EXEC SQL 
+     DECLARE cursor_caj CURSOR FOR
+          SELECT nro_caj
+          FROM cred_term
+          WHERE nro_caj_sf=:nro_caj_sf and
+                nro_ca=:nro_ca
+          ORDER BY nro_caj;
+
+     EXEC SQL
+         OPEN cursor_caj;
+
+     EXEC SQL
+         FETCH cursor_caj
+            INTO :nro_caj;
+
+     while (sqlca.sqlcode==0)
+     {
+ 
+         cont_cajas_proc++;
+
+         printf("Caja: %s\n", nro_caj.arr); 
+
+         lcont_vta=0;
+         lcont_anu=0;
+         lcont_dev=0;
+         lmonto_acum_vta=0;
+         lmonto_acum_anu=0;
+         lmonto_acum_dev=0;
+         memset(monto.arr, 0, sizeof(monto.arr));
+
+         EXEC SQL
+             DECLARE cursor_trx CURSOR FOR
+                  SELECT fec_loc, nro_tar, monto, cod_trx, nro_lot
+                  FROM hist_trx
+                  WHERE nro_caj=:nro_caj and
+                        cod_est='04' and 
+                        cod_tar=:cod_tar and
+                        TO_CHAR(TO_DATE(fec_loc, 'MMDDHH24MISS'), 'DDMM')=
+                        :fecha;
+
+         EXEC SQL
+             OPEN cursor_trx;
+ 
+         EXEC SQL 
+             FETCH cursor_trx
+                INTO :fec_loc, :nro_tar, :monto, :cod_trx, :nro_lot;
+
+         printf("sqlcode: %ld\n", sqlca.sqlcode);
+         if (sqlca.sqlcode==1403)
+         {
+            cont_cajas_sin_mov++;
+         }
+
+         titulo_caja=1;
+         while (sqlca.sqlcode==0)        
+         {
+               if (cont_linea==60)
+               {
+
+                   fprintf(ftot, "\f"); 
+                   nro_pag++;
+                   fprintf(ftot, "\n\tCOTO C.I.C.S.A.\t\t\t\tFECHA: %s\n", fec); 
+                   fprintf(ftot, "\tPGM: gencie \t\t\t\tPAGINA: %d\n", nro_pag);
+
+                   fprintf(ftot, "\n\n\t\tTOTAL DE VENTAS POR CAJA TARJETA %.15s AL %s\n",
+                   descrip.arr, fecha_aux); 
+                   fprintf(ftot, "\n\n\t\t\tFECHA DE PRESENTACION %s\n", fec);
+                   fprintf(ftot, "\n\t----------------------------------------------"
+                      "-------------------------\n");
+                   fprintf(ftot, "\tSUCURSAL: %3s\t\t\tTOTAL $\t\tTOTAL TRANSACCIONES\n", 
+                      &nro_caj_sf.arr[2]); 
+                   fprintf(ftot, "\t----------------------------------------------"
+                      "-------------------------\n");
+
+                  if (titulo_caja)
+                  {
+                     fprintf(fcie, "\n\n\n\tCaja: %s\n\n", nro_caj.arr); 
+                     fprintf(fcie, "\tFecha Local\tTarjeta\t\t\tFecha Present.\t\tMonto\n"); 
+                     fprintf(fcie, "\t-----------\t-------\t\t\t--------------\t\t-----\n\n"); 
+                     fprintf(ftot, "\tCaja Nro.:    %s", nro_caj.arr); 
+                     titulo_caja=0;
+                   }
+                   cont_linea=5;
+               }
+               else
+               {
+                  if (titulo_caja)
+                  {
+                     fprintf(fcie, "\n\n\n\tCaja: %s\n\n", nro_caj.arr); 
+                     fprintf(fcie, "\tFecha Local\tTarjeta\t\t\tFecha Present.\t\tMonto\n"); 
+                     fprintf(fcie, "\t-----------\t-------\t\t\t--------------\t\t-----\n\n"); 
+                     fprintf(ftot, "\tCaja Nro.:    %s", nro_caj.arr); 
+                     titulo_caja=0;
+                   }
+
+               }
+
+             EXEC SQL
+                 SELECT fec_rta
+                    INTO :fec_rta
+                    FROM cred_cierre
+                    WHERE nro_ca=:nro_ca AND nro_caj=:nro_caj AND 
+                          nro_lot=:nro_lot AND cod_est='02';
+ 
+             printf("codTrx: %s\n", cod_trx.arr);
+             lmonto=atoi((char *)monto.arr);
+
+             switch (cod_trx.arr[1])
+             {
+                 case '0':
+                     lcont_vta++;
+                     lmonto_acum_vta+=lmonto; 
+                     break;  
+                 case '1':
+                     lcont_anu++;
+                     lmonto_acum_anu+=lmonto; 
+                     break;  
+
+                 case '2':
+                     lcont_dev++;
+                     lmonto_acum_dev+=lmonto; 
+                     break;  
+
+             }
+
+             dmonto=(double)lmonto/100;
+             fprintf(fcie, "\t%.2s-%.2s %.2s:%.2s:%.2s\t%s"
+                           "\t%.2s-%.2s %.2s:%.2s:%.2s\t\t", 
+                             &fec_loc.arr[2], fec_loc.arr,
+                             &fec_loc.arr[4], &fec_loc.arr[6],
+                             &fec_loc.arr[8],
+                             nro_tar.arr, 
+                             &fec_rta.arr[2], fec_rta.arr,
+                             &fec_rta.arr[4], &fec_rta.arr[6],
+                             &fec_rta.arr[8]);
+
+             fprintf(fcie, "%6.2f\n", dmonto);
+
+             memset(monto.arr, 0, sizeof(monto.arr));
+
+             EXEC SQL 
+                 FETCH cursor_trx
+                    INTO :fec_loc, :nro_tar, :monto, :cod_trx, :nro_lot;
+
+         }
+
+         EXEC SQL
+             CLOSE cursor_trx;
+
+         lcont_tot_vta+=lcont_vta;
+         lcont_tot_anu+=lcont_anu;
+         lcont_tot_dev+=lcont_dev;
+         lmonto_tot_vta+=lmonto_acum_vta;
+         lmonto_tot_anu+=lmonto_acum_anu;
+         lmonto_tot_dev+=lmonto_acum_dev;
+
+         if ((lcont_vta>0)||(lcont_anu>0)||(lcont_dev>0))
+         {
+            fprintf(fcie, "\n\n\n\t\t\t\t\tTotales caja %s:\n", 
+                           nro_caj.arr);
+         }
+
+         if (lcont_vta>0)
+         {
+            fprintf(fcie, "\n\n\t\t\t\t\tTotal ventas       :\t %d\n", 
+                         lcont_vta);
+            dmonto_acum_vta=(double)lmonto_acum_vta/100;
+            fprintf(fcie, "\t\t\t\t\tTotal importe      :\t %.2f\n", dmonto_acum_vta);
+            fprintf(ftot, "\t\t %10.2f\t\t%d\n", dmonto_acum_vta, lcont_vta);
+            cont_linea++;
+         }
+
+         if (lcont_anu>0)
+         {
+            fprintf(fcie, "\n\n\t\t\t\t\tTotal anulaciones  :\t %d\n", 
+                         lcont_anu);
+            dmonto_acum_anu=(double)lmonto_acum_anu/100;
+            fprintf(fcie, "\t\t\t\t\tTotal importe      :\t -%.2f\n", dmonto_acum_anu);
+            fprintf(ftot, "\t\t -%9.2f\t\t%d\n", dmonto_acum_anu, lcont_anu);
+            cont_linea++;
+         }
+
+         if (lcont_dev>0)
+         {
+            fprintf(fcie, "\n\n\t\t\t\t\tTotal devoluciones :\t %d\n", 
+                         lcont_dev);
+            dmonto_acum_dev=(double)lmonto_acum_dev/100;
+            fprintf(fcie, "\t\t\t\t\tTotal importe      :\t -%.2f\n", dmonto_acum_dev);
+            fprintf(ftot, "\t\t -%9.2f\t\t%d\n", dmonto_acum_dev, lcont_dev);
+            cont_linea++;
+         }
+
+         EXEC SQL
+             FETCH cursor_caj
+	        INTO :nro_caj;
+ 
+     }
+
+     fprintf(fcie, "\n\n\n\n\tTotales de operaciones:\n");
+     fprintf(fcie, "\t------- -- -----------\n");
+
+     fprintf(fcie, "\n\n\t\t\t\t\tTotal ventas       :\t %ld\n", 
+	           lcont_tot_vta);
+     dmonto_tot_vta=(double)lmonto_tot_vta/100;
+     fprintf(fcie, "\t\t\t\t\tTotal importe      :\t %.2f\n", dmonto_tot_vta);
+
+     fprintf(fcie, "\n\n\t\t\t\t\tTotal anulaciones  :\t %ld\n", 
+	           lcont_tot_anu);
+     dmonto_tot_anu=(double)lmonto_tot_anu/100;
+     fprintf(fcie, "\t\t\t\t\tTotal importe      :\t -%.2f\n", dmonto_tot_anu);
+
+     fprintf(fcie, "\n\n\t\t\t\t\tTotal devoluciones :\t %ld\n", 
+	           lcont_tot_dev);
+     dmonto_tot_dev=(double)lmonto_tot_dev/100;
+     fprintf(fcie, "\t\t\t\t\tTotal importe      :\t -%.2f\n", dmonto_tot_dev);
+
+     fprintf(fcie, "\n\n\n\n\tTotal general:\n");
+     fprintf(fcie,         "\t----- -------\n\n\n");
+
+
+     fprintf(fcie, "\t\t\t\t\tTotal operaciones  :\t %ld\n", lcont_tot_vta+
+	           lcont_tot_anu+lcont_tot_dev);
+
+     fprintf(fcie, "\t\t\t\t\tImporte Neto       :\t %.2f\n", dmonto_tot_vta-
+	           (dmonto_tot_anu + dmonto_tot_dev));
+
+
+     fprintf(ftot, "\n\n\n\tTotal Sucursal %.13s  %13.2f\n", descrip.arr, 
+                   dmonto_tot_vta-(dmonto_tot_anu + dmonto_tot_dev));
+
+     fprintf(ftot, "\n\n\n\tCantidad total de Cajas Procesadas: %d\n",
+                   cont_cajas_proc);
+     fprintf(ftot, "\n\tCantidad total de Cajas sin movimientos: %d\n",
+                   cont_cajas_sin_mov);
+     fprintf(ftot, "\n\tCantidad total de Transacciones Procesadas: %d\n",
+                   lcont_tot_vta+lcont_tot_anu+lcont_tot_dev);
+
+     fclose(fcie);
+     fclose(ftot);
+     fclose(fd);
+
+     EXEC SQL
+         CLOSE cursor_caj;
+ 
+}

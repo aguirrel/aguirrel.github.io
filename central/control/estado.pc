@@ -1,0 +1,303 @@
+/*************************************************************************/
+/*                                                                       */
+/* estado.pc        : Informacion varia sobre cred_trx                   */
+/*                                                                       */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 14/07/98                                           */
+/* Compilador       : C++                                                */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <signal.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR     MaxMonto[12];
+    VARCHAR     MinMonto[12];
+
+    VARCHAR     nRegistros[12];
+
+    VARCHAR     nVisa[12];
+    VARCHAR     nDiners[12];
+
+    VARCHAR     MontoTotal[12];
+
+    VARCHAR     nTarjLectora[18];
+    VARCHAR     nTarjManual[18];
+
+    VARCHAR     nTarjetas[18];
+
+    VARCHAR	nEnvOnline[12];
+    VARCHAR	nEnvOffline[12];
+
+    VARCHAR    cuota[1];
+
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+    VARCHAR     nro_caj_sf[2];
+    VARCHAR     nro_caj_ca[8];
+
+    VARCHAR     tnro_caj_ca[8];
+    VARCHAR     tnro_lot[3];
+
+    VARCHAR     cnro_com[15];
+
+    VARCHAR     nro_lot[3];
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_caj2[5];
+    VARCHAR     nro_caj_ori[5];
+    VARCHAR     nro_trx[4];
+    VARCHAR     mod_env[2];
+    VARCHAR     cod_tar[2];
+    VARCHAR     nro_ca[2];
+    VARCHAR     cod_trx[2];
+
+    VARCHAR     cod_est[2];
+    VARCHAR     can_ret[4];
+    VARCHAR     cod_pro[6];
+    VARCHAR     monto[12];
+    VARCHAR     nro_tar[20];
+    VARCHAR     nro_trc[6];
+    VARCHAR     fec_loc[4];
+    VARCHAR     fec_ven[4];
+    VARCHAR     mod_ing[3];
+    VARCHAR     nro_tic[4];
+
+    VARCHAR     cod_aut[6];
+    VARCHAR     fec_vtacard[4];
+    VARCHAR     nro_com[15];
+    VARCHAR     plan_iso[1];
+    VARCHAR     plan_sf[2];
+    VARCHAR     nro_cuo[3];
+    VARCHAR     cod_mon[3];
+
+
+EXEC SQL END DECLARE SECTION;
+
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+
+
+void main (void)
+{
+  FILE *fd;
+  char szFecha[5];
+  int ret;
+  long lcont;
+  char szFecAuxi[5];
+  char szFecAuxi2[3];
+  long lRegProcess = 0;
+  long lRegistros = 0;
+  time_t  hIni;
+  int ProcessChildID;
+
+
+  printf("Procesando...\n");
+  fprintf(fd, "Procesando..\n");
+
+  printf("Apertura del archivo estado.log\n\n");
+  if ( (fd=fopen("/online/log/estado.log", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura de archivo estado.log\n");
+    exit(-1);
+  }
+ 
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+  hIni=time(&hIni);
+  printf("\nInicio: %s\n", asctime(localtime(&hIni)) );
+  fprintf(fd, "\nInicio: %s\n", asctime(localtime(&hIni)) );
+
+  if ( ( ProcessChildID = fork()) == 0 ) 
+  {
+    /* Proceso hijo */
+    printf("Proceso hijo..."); 
+    fprintf(fd, "Proceso hijo..."); 
+    while( 1 )
+    {
+	printf(".");
+	fprintf(fd, ".");
+	sleep(1);
+    } 
+  }
+  else
+  {
+          printf("Proceso padre..."); 
+          fprintf(fd, "Proceso padre..."); 
+	  /* Numero de registros en la base de datos */
+	  EXEC SQL
+		SELECT COUNT(*) 
+		INTO nRegistros
+		FROM cred_trx;
+
+	  /* Venta de mayor monto */
+	  EXEC SQL
+		SELECT MAX(monto) 
+		INTO :MaxMonto
+		FROM cred_trx;
+
+	  /* Venta de menor monto */
+	  EXEC SQL 
+		SELECT MIN(monto) 
+		INTO :MinMonto
+		FROM cred_trx
+		WHERE cod_trx != '02';
+	
+
+	  /* Suma total de 'monto' */
+	  EXEC SQL
+		SELECT SUM(monto) 
+		INTO MontoTotal
+		FROM cred_trx;
+
+	  /* Cantidad de tarjetas de credito */
+	  EXEC SQL
+		SELECT COUNT(DISTINCT nro_tar) 
+		INTO nTarjetas
+		FROM cred_trx;
+
+	  /* Numero de transacciones con tarjeta Visa */
+	  EXEC SQL
+		SELECT COUNT(*) 
+		INTO :nVisa
+		FROM  cred_trx
+		WHERE cod_tar='01';
+
+	  /* Numero de transacciones con tarjeta diners */
+	  EXEC SQL
+		SELECT COUNT(*) 
+		INTO :nDiners
+		FROM cred_trx
+		WHERE cod_tar='02';
+
+	  /* Cantidad de tarjetas ingresadas manualmente  */
+	  EXEC SQL
+		SELECT count(*) 
+		INTO nTarjManual
+		FROM cred_trx
+		WHERE mod_ing = '000'; 
+
+	  /* Cantidad de tarjetas ingresadas por la lectora  */
+	  EXEC SQL
+		SELECT count(*) 
+		INTO nTarjLectora
+		FROM cred_trx
+		WHERE mod_ing = '012';
+
+	  /* Envios (mod_env) OnLine  */
+	  EXEC SQL
+		SELECT count(*) 
+		INTO nEnvOnline
+		FROM cred_trx
+		WHERE mod_env = '00';
+
+	  /* Envios (mod_env) OffLine  */
+	  EXEC SQL
+		SELECT count(*) 
+		INTO nEnvOffline
+		FROM cred_trx
+		WHERE mod_env = '01';
+  }
+
+printf("\n\tNro de reg. en la BD           : %s", nRegistros.arr);
+printf("\n\tVenta de mayor monto           : %s", MaxMonto.arr);
+printf("\n\tVenta de menor monto           : %s", MinMonto.arr);
+printf("\n\tSuma total de 'monto'          : %s", MontoTotal.arr);
+printf("\n\tCantidad de tarjetas           : %s", nTarjetas.arr);
+printf("\n\tNro de trans. con tarj. Visa   : %s", nVisa.arr);
+printf("\n\tNro de trans. con tarj. Diners : %s", nDiners.arr);
+printf("\n\tCant. de tarj. ingr. manual    : %s", nTarjManual.arr); 
+printf("\n\tCant. de tarj. ingr. lectora   : %s", nTarjLectora.arr);
+printf("\n\tCant. de envios OnLine         : %s", nEnvOnline.arr); 
+printf("\n\tCant. de envios OffLine        : %s", nEnvOffline.arr);
+
+fprintf(fd, "\n\tNro de reg. en la BD           : %s", nRegistros.arr);
+fprintf(fd, "\n\tVenta de mayor monto           : %s", MaxMonto.arr);
+fprintf(fd, "\n\tVenta de menor monto           : %s", MinMonto.arr);
+fprintf(fd, "\n\tSuma total de 'monto'          : %s", MontoTotal.arr);
+fprintf(fd, "\n\tCantidad de tarjetas           : %s", nTarjetas.arr);
+fprintf(fd, "\n\tNro de trans. con tarj. Visa   : %s", nVisa.arr);
+fprintf(fd, "\n\tNro de trans. con tarj. Diners : %s", nDiners.arr);
+fprintf(fd, "\n\tCant. de tarj. ingr. manual    : %s", nTarjManual.arr); 
+fprintf(fd, "\n\tCant. de tarj. ingr. lectora   : %s", nTarjLectora.arr);
+fprintf(fd, "\n\tCant. de envios OnLine         : %s", nEnvOnline.arr); 
+fprintf(fd, "\n\tCant. de envios OffLine        : %s", nEnvOffline.arr);
+
+
+  printf("\n\nSaliendo del programa...\n");
+  fprintf(fd, "\n\nSaliendo del programa...\n");
+  hIni=time(&hIni);
+  printf("\nFin: %s\n", asctime(localtime(&hIni)) );
+  fprintf(fd, "\nFin: %s\n", asctime(localtime(&hIni)) );
+  fclose(fd);
+  kill( ProcessChildID, SIGKILL );
+
+/*   SIGTERM */
+}
+

@@ -1,0 +1,438 @@
+/************************************************************************/
+/* depuracion.pc    : Depuracion de la tabla cred_trx. 			*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Piccirillo Fernando				*/
+/* Fecha	    : 04/05/98						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/* 									*/
+/* Modificado por   : Andres Manggini.   				*/
+/* Descripcion	    : Depura todos los registros sin filtrar por cod_est*/
+/*		      Depura las tablas cred_trx, sucvtatot, vtatot y	*/
+/*		      vtacard.						*/
+/*									*/
+/************************************************************************/
+
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN       20
+#define PASSWD_LEN       20
+
+#define varcpy(X,Y)		{ strncpy(X.arr,Y , sizeof(X.arr));  \
+				  X.len=(sizeof(X.arr) < strlen(Y) ? \
+				       sizeof(X.arr) : strlen(Y)); }
+#define varcpy2(X,Y)		{ strncpy(X, Y.arr, Y.len);\
+				  X[Y.len]=0; }
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+
+
+int open_db(str_login *data);
+void init();
+void getFechaActual(char *fecha);
+
+EXEC SQL INCLUDE SQLCA;
+
+long              ret;
+int               code;
+int               SqlErrno;
+char              hor[11];
+char              caj[6];
+char 		  g_szFechaAuxi[5];	
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR     nro_caj[5];
+
+    VARCHAR     fec_locReverse[8];
+    VARCHAR     fec_loc2Reverse[8];
+
+    VARCHAR     fec_loc[8];
+    VARCHAR     fec_loc2[8];
+
+EXEC SQL END DECLARE SECTION;
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy(userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy(passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+
+    if (sqlca.sqlcode!=OK)
+        {
+	SqlErrno=sqlca.sqlcode;
+	return NOOK;
+        }
+    SqlErrno=OK;
+    return OK;
+}
+
+void SwitchFecha(char* szFechaDest, char* szFechaOrig)
+{
+    char szFecAuxi[9];	
+    char szFecAuxi2[3];
+
+    strcpy(szFecAuxi, (char*)szFechaOrig);
+    strncpy(szFecAuxi2, &szFecAuxi[7], 2);
+
+    szFecAuxi[2] = '\0';
+    szFecAuxi2[2] = '\0';
+
+    strcpy( szFechaDest, "1998" );
+    strcat( szFechaDest, szFecAuxi2);
+    strcat( szFechaDest, szFecAuxi);
+/*    fec_loc.len = strlen( (char*) fec_loc.arr ); */
+
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+void getFechaActual(char *hora)
+{
+char fecha[11];
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d%02d%02d%02d%02d", newtime->tm_mday, 
+	newtime->tm_mon+1, newtime->tm_hour, newtime->tm_min, 
+	newtime->tm_sec);
+
+    sprintf(hora, "%2.2s:%2.2s:%2.2s", &fecha[4], &fecha[6], &fecha[8]); 
+
+}
+
+
+void main(int argc,char *argv[])
+{
+time_t hIni;
+FILE    *fd;
+  
+
+    if (argc<3)
+       {
+	    printf("\nUso: %s <MMDD> <MMDD> (MM=Mes, DD=Dia).\n\n", argv[0]);
+	    printf("Ej: %s 2205 0306 \n", argv[0]);
+	    printf("Actuar sobre todos los registros desde el 22/05 al 03/06.\n\n");
+	    exit(0);
+       }
+
+     if ((strlen(argv[1]) != 4) || (strlen(argv[2]) != 4))
+       {
+	    printf("\nUso: %s <MMDD> <MMDD> (MM=Mes, DD=Dia).\n\n", argv[0]);
+	    printf("Ej: %s 2205 0306 \n", argv[0]);
+	    printf("Actuar sobre todos los registros desde el 22/05 al 03/06.\n\n");
+	    exit(0);
+       }
+
+    strcpy((char *)fec_loc.arr,"1998");
+    strcat((char *)fec_loc.arr, argv[1]);
+    fec_loc.len=strlen((char*)fec_loc.arr);
+
+    strcpy((char *)fec_loc2.arr,"1998");
+    strcat((char *)fec_loc2.arr, argv[2]);
+    fec_loc2.len=strlen((char*)fec_loc2.arr);
+
+    SwitchFecha( g_szFechaAuxi, (char*) fec_loc.arr);
+    strcpy( (char*) fec_locReverse.arr, g_szFechaAuxi);
+    fec_locReverse.len = strlen( g_szFechaAuxi );
+	
+    SwitchFecha( g_szFechaAuxi, (char*) fec_loc2.arr);
+    strcpy( (char*) fec_loc2Reverse.arr, g_szFechaAuxi);
+    fec_loc2Reverse.len = strlen( g_szFechaAuxi );
+ 
+
+    if (strcmp((char *)fec_loc.arr,(char *)fec_loc2.arr) > 0)
+       {
+       printf("\nError, la primer fecha es mayor a la segunda\n\n");
+       exit(0);
+       }
+
+    if ((fd = fopen("depuracion.log", "w")) == NULL) 
+    {
+	printf("error en apertura de log\n");
+ 	exit(1);
+    }
+
+   printf("\nDepurando desde [%s] hasta [%s] (cred_trx) \n", fec_loc.arr,fec_loc2.arr);
+
+    init();
+    
+    EXEC SQL
+        DECLARE cursor_term CURSOR FOR
+            SELECT nro_caj
+            FROM cred_term
+            GROUP BY nro_caj
+            ORDER BY nro_caj;
+
+    EXEC SQL
+        OPEN cursor_term;
+
+    EXEC SQL 
+        FETCH cursor_term
+           INTO :nro_caj;
+
+    code = sqlca.sqlcode;
+
+    varcpy2(caj, nro_caj);
+
+    while(code==0)
+    {
+
+       fprintf(fd, "Numero de caja a depurar [%s] \n", caj);
+       printf("Numero de caja a depurar [%s] \n", caj);
+
+
+       EXEC SQL
+           INSERT INTO hist_trx1
+                   SELECT * FROM cred_trx 
+                            WHERE nro_caj = :nro_caj AND
+                            fec_cie>=:fec_loc AND
+                            fec_cie<=:fec_loc2;
+
+
+       if (sqlca.sqlcode==-1)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_trx1) %ld\n",sqlca.sqlcode);
+           fprintf(fd, "caja: [%s]\n", caj);
+
+           EXEC SQL 
+              FETCH cursor_term
+                 INTO :nro_caj;
+     
+           varcpy2(caj, nro_caj);
+
+           code = sqlca.sqlcode;
+
+           continue;
+       }
+           
+
+       if (sqlca.sqlcode!=0)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_trx1) %ld\n",sqlca.sqlcode);
+           printf("Error en Insert (Tabla hist_trx1) %ld\n",sqlca.sqlcode);
+
+           EXEC SQL
+               ROLLBACK ; 
+           exit(1);
+       }
+
+       EXEC SQL
+           COMMIT;
+
+       EXEC SQL
+           DELETE FROM cred_trx
+              WHERE nro_caj = :nro_caj AND
+                    fec_cie>= :fec_loc AND
+                    fec_cie<= :fec_loc2;
+
+       if ((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403))
+       {
+           fprintf(fd, "Error en Delete (Tabla cred_trx) %ld\n",sqlca.sqlcode);
+           printf("Error en Delete (Tabla cred_trx) %ld\n",sqlca.sqlcode);
+           EXEC SQL
+               ROLLBACK;
+           exit(1);
+       }
+ 
+       EXEC SQL
+           COMMIT;
+ 
+       EXEC SQL 
+           FETCH cursor_term
+              INTO :nro_caj;
+     
+       varcpy2(caj, nro_caj);
+
+       code = sqlca.sqlcode;
+
+       hIni=time(&hIni);
+       fprintf(fd, "finalizando caja: %s", asctime(localtime(&hIni)));
+
+    } /* Fin del while ppal. */
+
+    EXEC SQL
+        CLOSE cursor_term;
+    
+
+/******************************* Depurar SucVtaTot *******************************/
+	printf("\n\nDepurando SucVtaTot \n\n");
+       EXEC SQL
+           INSERT INTO hist_sucvtatot
+                   SELECT * FROM sucvtatot 
+                           WHERE fec_vtacard >= :fec_locReverse 
+			     AND fec_vtacard <= :fec_loc2Reverse;
+
+       if (sqlca.sqlcode==-1)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_sucvtatot) %ld\n",sqlca.sqlcode);
+           code = sqlca.sqlcode;
+       }
+
+       if (sqlca.sqlcode!=0)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_sucvtatot) %ld\n", sqlca.sqlcode);
+           printf("Error en Insert (Tabla hist_sucvtatot) %ld\n", sqlca.sqlcode);
+
+           EXEC SQL
+               ROLLBACK ; 
+           exit(1);
+       }
+
+       EXEC SQL
+           COMMIT;
+
+       EXEC SQL
+           DELETE FROM sucvtatot
+              WHERE fec_vtacard >= :fec_locReverse
+		AND fec_vtacard <= :fec_loc2Reverse;
+
+       if ((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403))
+       {
+           fprintf(fd, "Error en Delete (Tabla sucvtatot) %ld\n", sqlca.sqlcode);
+           printf("Error en Delete (Tabla sucvtatot) %ld\n", sqlca.sqlcode);
+           EXEC SQL
+               ROLLBACK;
+           exit(1);
+       }
+ 
+       EXEC SQL
+           COMMIT;
+
+/*******************************************************************************/
+
+
+
+/******************************* Depurar vtacard *******************************/
+	printf("\n\nDepurando VtaCard \n\n");
+
+       EXEC SQL
+           INSERT INTO hist_vtacard
+                   SELECT * FROM vtacard 
+                           WHERE fec_vtacard >= :fec_locReverse 
+			     AND fec_vtacard <= :fec_loc2Reverse;
+
+       if (sqlca.sqlcode==-1)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_vtacard) %ld\n",sqlca.sqlcode);
+           code = sqlca.sqlcode;
+       }
+
+       if (sqlca.sqlcode!=0)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_vtacard) %ld\n", sqlca.sqlcode);
+           printf("Error en Insert (Tabla hist_vtacard) %ld\n", sqlca.sqlcode);
+
+           EXEC SQL
+               ROLLBACK ; 
+           exit(1);
+       }
+
+       EXEC SQL
+           COMMIT;
+
+       EXEC SQL
+           DELETE FROM vtacard
+              WHERE fec_vtacard >= :fec_locReverse
+		AND fec_vtacard <= :fec_loc2Reverse;
+
+       if ((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403))
+       {
+           fprintf(fd, "Error en Delete (Tabla vtacard) %ld\n", sqlca.sqlcode);
+           printf("Error en Delete (Tabla vtacard) %ld\n", sqlca.sqlcode);
+           EXEC SQL
+               ROLLBACK;
+           exit(1);
+       }
+ 
+       EXEC SQL
+           COMMIT;
+
+/****************************************************************************************/
+
+
+
+/******************************* Depurar vtatot *******************************/
+	printf("\n\nDepurando VtaTot \n\n");
+
+       EXEC SQL
+           INSERT INTO hist_vtatot
+                   SELECT * FROM vtatot 
+                           WHERE fec_vtacard >= :fec_locReverse 
+			     AND fec_vtacard <= :fec_loc2Reverse;
+
+       if (sqlca.sqlcode==-1)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_vtatot) %ld\n",sqlca.sqlcode);
+           code = sqlca.sqlcode;
+       }
+
+       if (sqlca.sqlcode!=0)
+       {
+           fprintf(fd, "Error en Insert (Tabla hist_vtatot) %ld\n", sqlca.sqlcode);
+           printf("Error en Insert (Tabla hist_vtatot) %ld\n", sqlca.sqlcode);
+
+           EXEC SQL
+               ROLLBACK ; 
+           exit(1);
+       }
+
+       EXEC SQL
+           COMMIT;
+
+       EXEC SQL
+           DELETE FROM vtatot
+              WHERE fec_vtatot >= :fec_locReverse
+		AND fec_vtatot <= :fec_loc2Reverse;
+
+       if ((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403))
+       {
+           fprintf(fd, "Error en Delete (Tabla vtatot) %ld\n", sqlca.sqlcode);
+           printf("Error en Delete (Tabla vtatot) %ld\n", sqlca.sqlcode);
+           EXEC SQL
+               ROLLBACK;
+           exit(1);
+       }
+ 
+       EXEC SQL
+           COMMIT;
+
+/****************************************************************************************/
+
+
+    hIni=time(&hIni);
+    fprintf(fd, "\nDepuracion Finalizada %s\n", asctime(localtime(&hIni)));
+    close (fd);  
+
+}

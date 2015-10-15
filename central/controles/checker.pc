@@ -1,0 +1,326 @@
+/*
++------------------------------------------------------------------------------+
+|           COTO - PLATAFORMAS SECTORIALES - DESARROLLO DISTRIBUCION           |
+|              Copyright (C) 2003 - COTO CICSA                                 |
++-----------------+------------------------------------------------------------+
+| FUENTE          | checker.pc                                                 |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Proceso para controlar la tabla cred_trx contra la tabla   |
+|                 | de credito de la sucursal                                  |
++-----------------+------------------------------------------------------------+
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define OK					0
+#define NOOK				-1
+#define MAX_LONG_TARJ		20
+
+extern int	SqlErrno;
+
+struct trx 
+{
+	char nro_caj[6];
+	char nro_trx[5];
+	char cod_tar[3];
+	char nro_tar[21];
+	char cod_aut[9];
+	char monto[15];
+	char fecha[7];
+	char hora[5];
+	char cuotas[4];
+	char plan[3];
+	char sitsend[3];
+};
+
+struct trx TrxRead;
+    
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR		userid[20];
+    VARCHAR     nro_tar[20];
+    VARCHAR     cod_aut[6];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_trx[4];
+    VARCHAR     cod_tar[2];
+    VARCHAR     monto[14];
+    VARCHAR     nro_lot[3];
+    VARCHAR     mod_env[2];
+    short       NULL1;
+    VARCHAR     tarjeta[21];
+    VARCHAR     cod_aut_loc[7];
+EXEC SQL END DECLARE SECTION;
+
+/*
++-----------------+------------------------------------------------------------+
+| FUENTE          | open_db                                                    |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion de conexion a la base de datos                     |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int open_db()
+{
+	int SqlErrno;
+
+    strcpy((char *)userid.arr, "/");
+    userid.len=strlen(userid.arr);
+
+    EXEC SQL
+		CONNECT :userid;
+		
+    if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		printf("error al conectarse a la Base de Datos\n");
+		printf("Error [%d]\n",SqlErrno);
+		return NOOK;
+	}
+    SqlErrno=OK;
+    return OK;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUENTE          | comp_cod_aut                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Compara los codigos de autorizacion                        |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int comp_cod_aut(char *cod1, char *cod2)
+{
+    return ((!strncmp(cod1, cod2, 6)) || (!strncmp(cod1, &cod2[2], 6)));
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUENTE          | main                                                       |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion principal de la aplicacion                         |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int main (int argc, char *argv[])
+{
+	char buffer[256];
+	char buffer2[256];
+	FILE *fanom; 
+	FILE *fpending;
+	FILE *fvtacard;
+	int	 iRet1, iRet2;
+	char szFileName[100];
+	char szDescripcion[8];
+	char szFechaAnt[5];
+	char szEntrada[15];
+	int  iCont;
+
+	/* Verifica correccion en parametros */
+    if (argc<2)
+    {
+         printf ("\nUso checker [nombre-file]\n\n");
+         exit(1);
+    }
+
+    /* Abre base de datos */
+	open_db();
+
+	/* Abre archivo de entrada vtacard */
+	memset(szEntrada, 0, sizeof(szEntrada));
+    memset(szFechaAnt, 0, sizeof(szFechaAnt));
+    strcpy(szEntrada, argv[1]); 
+	strncpy(szFechaAnt, &szEntrada[8], 4);
+    printf("\nFecha [%s]\n", szFechaAnt);   
+    printf("\nApertura de archivo [%s]\n", argv[1]);
+    if ((fvtacard=fopen(argv[1], "r"))==NULL)
+    {
+         printf ("\nError: Apertura de archivo %s\n", argv[1]);
+         exit(1);
+    }
+
+    /* Abre archivo anomal */
+	strcpy(szFileName, "anomal.");
+    strcat(szFileName, szFechaAnt);
+    printf("\nGenerando [%s] ...\n", szFileName);
+    if ((fanom=fopen(szFileName, "w"))==NULL)
+    {
+         printf("\nError: Apertura de archivo %s\n", szFileName);
+         exit(1);
+    }
+    
+	/* Abre archivo pending */
+    strcpy(szFileName, "pending.");
+    strcat(szFileName, szFechaAnt);
+    printf("\nGenerando [%s] ...\n", szFileName);
+    if ((fpending=fopen(szFileName, "w"))==NULL)
+    {
+         printf("\nError: Apertura de archivo %s\n", szFileName);
+         exit(1);
+    }
+    
+	/* Repite para cada registro del archivo */
+    while(fgets(buffer,sizeof(buffer),fvtacard)!=NULL)
+    {
+		/* Arma la transaccion */
+		memset(&TrxRead, 0, sizeof(struct trx));
+		strncpy(TrxRead.nro_caj, buffer     ,  5);
+		strncpy(TrxRead.nro_trx, &buffer[5] ,  4);
+		strncpy(TrxRead.cod_tar, &buffer[9] ,  2);
+		strncpy(TrxRead.nro_tar, &buffer[11], 20);
+		strncpy(TrxRead.cod_aut, &buffer[31],  8);
+		strncpy(TrxRead.monto  , &buffer[39], 14);
+		strncpy(TrxRead.fecha  , &buffer[53],  6);
+		strncpy(TrxRead.hora   , &buffer[67],  4);  
+		strncpy(TrxRead.plan   , &buffer[71],  2);  
+		strncpy(TrxRead.cuotas , &buffer[73],  3);  
+
+		/* Si el codigo de autorizacion es cero levanta el que le corresponde a la CRED_TARJ */
+		if ( strcmp(TrxRead.cod_aut, "000000") == 0 )
+		{
+			strcpy((char *)cod_tar.arr, TrxRead.cod_tar);
+			cod_tar.len=strlen(TrxRead.cod_tar);
+
+			EXEC SQL
+				SELECT NVL(cod_aut_loc,'000000')
+				INTO :cod_aut_loc
+				FROM cred_tarj WHERE
+				Cod_tar=:cod_tar;
+
+			if ((sqlca.sqlcode!=0) && (sqlca.sqlcode!=1403) && (sqlca.sqlcode!=-1403))
+			{
+				strncpy(TrxRead.cod_aut, "000000",6);
+			}
+			else
+			{
+				strncpy(TrxRead.cod_aut, cod_aut_loc.arr,6);
+			}
+		}
+
+		/* Verifica si carga plan y cuotas por defecto */
+		if (TrxRead.plan[0]=='\n')
+		{
+			strncpy(TrxRead.plan  , "00"  ,2);  
+			strncpy(TrxRead.cuotas, "001" ,3);  
+		}   
+		
+		/* Carga las variables de oracle para consultar si el registro existe */
+		strcpy((char *)cod_tar.arr , TrxRead.cod_tar);
+		strcpy((char *)nro_caj.arr , TrxRead.nro_caj);
+		strcpy((char *)nro_trx.arr , TrxRead.nro_trx);
+		strcpy((char *)monto.arr   , TrxRead.monto  );
+
+		cod_tar.len = strlen(TrxRead.cod_tar);
+		nro_caj.len = strlen(TrxRead.nro_caj);
+		nro_trx.len = strlen(TrxRead.nro_trx);
+		monto.len   = strlen(TrxRead.monto  );
+
+		/* Quita los ceros al numero de tarjeta */
+		iCont=0;
+		while ( (TrxRead.nro_tar[iCont]=='0') && (iCont<MAX_LONG_TARJ) )
+		{
+			iCont++;
+		}
+		strcpy((char *)tarjeta.arr, &TrxRead.nro_tar[iCont]);
+		tarjeta.len=strlen(TrxRead.nro_tar)-iCont;
+
+		/*********************************************************************/
+		/*MODIFICADO: Se agregaron los codigos de estador 33(vta-dev anulada)*/
+		/*34(vta-dev anulada online) en el select, para tratar el envio de   */
+		/*devoluciones como anulaciones [DS][DL][10-12-2000]                 */
+		/*********************************************************************/
+		EXEC SQL
+			SELECT nro_tar, cod_aut, nro_lot, mod_env
+			INTO :nro_tar, :cod_aut:NULL1, :nro_lot, :mod_env
+			FROM cred_trx
+			WHERE	nro_caj=:nro_caj and 
+					nro_trx=:nro_trx and
+					cod_tar=:cod_tar and
+					rtrim(nro_tar,' ')=:tarjeta and 
+					monto=TO_NUMBER(:monto)*100 and
+					(cod_est='00' or cod_est='02' or cod_est='04' or cod_est='12' or 
+					cod_est='10' or cod_est='32' or cod_est='33' or cod_est='34' or
+					cod_est='35' or cod_est='36' );
+	
+		/* Verifica si cod_aut es null */
+		if (NULL1==-1)
+		{
+			strncpy((char *)cod_aut.arr, "", sizeof(cod_aut.arr));
+		}
+
+		/* Verifica si la consulta dio error */
+		if ((sqlca.sqlcode!=0)&&(sqlca.sqlcode!=1403))
+		{
+			printf("Error en Select %ld \n", sqlca.sqlcode);
+			exit(1);
+		}       
+		else 
+		{
+			/* Si no hay datos */
+			if (sqlca.sqlcode==1403) 
+            {
+				/* Arma el registro a guardar */
+				memset(buffer2, '\0'            , strlen(buffer2));
+				strncpy(buffer2, buffer         , 61);
+				strncat(buffer2, szFechaAnt     , 4);
+				strncat(buffer2, TrxRead.hora   , 4);
+				strncat(buffer2, TrxRead.plan   , 2);   
+				strncat(buffer2, TrxRead.cuotas , 3);  
+				strcat(buffer2, "\n");
+
+				/* Caso 1 Transaccion pendiente */
+				strcpy(szDescripcion, "PEND");     
+				fprintf(fpending, "%s", buffer2);
+			}
+            else  /* Comparacion de los campos cod_aut y nro_tar*/
+            {              
+				/* Quita los ceros al numero de tarjeta */
+				iCont=0;
+				while ( (TrxRead.nro_tar[iCont]=='0') && (iCont<MAX_LONG_TARJ) )
+				{
+					iCont++;
+				}
+
+				/* Compara el numero de tarjeta del archivo con el de la tabla */
+				iRet1= strncmp((char *)nro_tar.arr, &TrxRead.nro_tar[iCont], MAX_LONG_TARJ-iCont);
+
+				/* Compara el codigo de autorizacion con el de la tabla */
+				iRet2=comp_cod_aut((char *)cod_aut.arr, TrxRead.cod_aut);
+
+				/* Caso 2 No coincide nada */
+				if ((iRet1!=0)&&(iRet2!=0))   
+				{
+					strcpy(szDescripcion, "ERROR");  
+				}
+				else
+				{ 
+					/* Caso 3 No coincide cod_aut */
+					if (iRet2!=0)   
+					{   
+						strcpy(szDescripcion, "NOOK(1)");
+						fprintf(fanom, "%s", buffer);
+					}
+					else 
+					{
+						/* Caso 4 No coincide nro_tar */
+						if (iRet1!=0) 
+						{
+							strcpy(szDescripcion, "NOOK(2)");
+							fprintf(fanom, "%s", buffer);
+						}
+						else /* Caso 5 Estado OK */
+						{
+							strcpy(szDescripcion, "(OK)");    
+						}
+					}
+				}
+			} /* Fin del else de la comparacion de los campos */
+		}
+	} /* Fin del while */
+
+	/*Cierra los archivos */ 
+	fclose(fvtacard);
+	fclose(fanom);
+	fclose(fpending);
+}

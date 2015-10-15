@@ -1,0 +1,227 @@
+/*************************************************************************/
+/*                                                                       */
+/* fixcom.pc  	    : le pone el numero de comercio a las nro_cuo>1      */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 23/07/98                                           */
+/* Compilador       : PRO*C/C++                                          */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR     FechaDesde[4];
+    VARCHAR     FechaHasta[4];
+
+    VARCHAR     NroSuc[2];
+    VARCHAR     cod_tar[2];
+
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+    VARCHAR     nro_cuo[3];
+    VARCHAR     nro_com[15];
+    VARCHAR     nro_caj_sf[5];
+    VARCHAR     fec_loc[4];
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_ca[2];
+    VARCHAR     nro_trx[4];
+    VARCHAR     nro_caj[5];
+    VARCHAR     monto[12];
+
+    VARCHAR     Cant[12];
+EXEC SQL END DECLARE SECTION;
+
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+
+void main (int argc, char *argv[])
+{
+  FILE *fd;
+  time_t  hIni;
+  int nCount= 0;
+
+  if (argc < 4)
+  {
+    printf("\nUso: %s <DDMM> <DDMM> (DD=Dia, MM=Mes).\n\n", argv[0]);
+    printf("Ej: %s 2205 0306 \n", argv[0]);
+    printf("Actuar sobre todos los registros desde el 22/05 al 03/06.\n\n");
+    exit(-1);
+  }
+
+
+  printf("Apertura del archivo fixcom.log\n\n");
+  if ( (fd=fopen("/online/log/fixcom.log", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura de archivo fixcom.log\n");
+    exit(-1);
+  }
+
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+
+
+   hIni=time(&hIni);
+   printf("\nInicio: %s\n", asctime(localtime(&hIni)) );
+   fprintf(fd, "\nInicio: %s\n", asctime(localtime(&hIni)) );
+
+  /* Guardo las fechas */
+  strcpy( (char*) FechaDesde.arr, argv[1]);
+  FechaDesde.len = strlen( (char*) FechaDesde.arr);
+
+  strcpy( (char*) FechaHasta.arr, argv[2]);
+  FechaHasta.len = strlen( (char*) FechaHasta.arr);
+
+  strcpy( (char*) monto.arr, argv[3] );
+  monto.len = strlen( (char*) monto.arr );
+  /**/
+
+ 
+  printf("\nComienza proceso de actualizacion...\n");
+
+
+  EXEC SQL
+	SELECT count(*) 
+	  INTO nCount from cred_trx
+         WHERE cod_est = '02'
+	   AND cod_tar = '08'
+	   AND fec_loc like '0804%';
+
+	printf("\n\nCantidad de registros a modificar: %d\n\n", nCount);
+
+
+
+   EXEC SQL
+        DECLARE cursor_trx CURSOR FOR
+            SELECT nro_caj, nro_caj_sf, nro_suc, nro_ca, nro_trx, cod_tar
+              FROM cred_trx 
+             WHERE cod_est = '02'
+	       AND cod_tar = '08'
+	       AND fec_loc like '0804%';
+
+/*               AND nro_cuo > '001'
+               AND cod_mon = '840' 
+               AND monto = :monto 
+               AND (substr(fec_loc,1,4) BETWEEN :FechaDesde AND FechaHasta);  
+*/
+
+   EXEC SQL
+     OPEN cursor_trx;
+
+   EXEC SQL
+      FETCH cursor_trx
+         INTO :nro_caj, :nro_caj_sf, :nro_suc, :nro_ca, :nro_trx, :cod_tar;
+
+  while ( sqlca.sqlcode == 0 )
+  {
+
+     EXEC SQL
+        UPDATE cred_trx 
+        SET nro_com = (select cred_com.nro_com from cred_com where cred_com.cod_con_com_cie = '1' AND cred_com.nro_caj_sf = :nro_caj_sf AND cred_com.cod_tar = :cod_tar)
+	WHERE cod_est='02'
+	  AND nro_caj = :nro_caj
+	  AND nro_trx = :nro_trx
+	  AND nro_suc = :nro_suc
+	  AND nro_ca  = :nro_ca
+          AND cod_tar = '08'
+	  AND fec_loc like '0804%';
+
+
+/*	EXEC SQL
+        	select count(*) 
+		into   nCount 
+		from   cred_trx 
+		WHERE cod_est='02'
+		  AND nro_caj = :nro_caj
+		  AND nro_trx = :nro_trx
+		  AND nro_suc = :nro_suc
+		  AND nro_ca  = :nro_ca
+	          AND cod_tar = '08'
+		  AND fec_loc like '0804%';
+*/
+
+     EXEC SQL
+        COMMIT;
+
+  
+  EXEC SQL
+      FETCH cursor_trx
+         INTO :nro_caj, :nro_caj_sf, :nro_suc, :nro_ca, :nro_trx, :cod_tar;
+  }
+
+
+  EXEC SQL
+      CLOSE cursor_trx;
+
+
+  printf("\nSaliendo del programa...\n");
+  fprintf(fd, "\nSaliendo del programa...\n");
+  fclose(fd);
+}
+

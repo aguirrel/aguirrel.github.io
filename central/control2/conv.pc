@@ -1,0 +1,278 @@
+/*************************************************************************/
+/*                                                                       */
+/* convert.pc       : Funcion para reinsertar las trx                    */
+/*                                                                       */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 06/07/98                                           */
+/* Compilador       : C++                                                */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+    VARCHAR     nro_caj_sf[2];
+    VARCHAR     nro_caj_ca[8];
+
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_caj_ori[5];
+    VARCHAR     nro_trx[4];
+    VARCHAR     mod_env[2];
+    VARCHAR     cod_tar[2];
+    VARCHAR     nro_ca[2];
+    VARCHAR     cod_trx[2];
+
+    VARCHAR     cod_est[2];
+    VARCHAR     can_ret[4];
+    VARCHAR     nro_lot[3];
+    VARCHAR     cod_pro[6];
+    VARCHAR     monto[12];
+    VARCHAR     nro_tar[20];
+    VARCHAR     nro_trc[6];
+    VARCHAR     fec_loc[4];
+    VARCHAR     fec_ven[4];
+    VARCHAR     mod_ing[3];
+    VARCHAR     nro_tic[4];
+
+    VARCHAR     cod_aut[6];
+    VARCHAR     fec_vtacard[4];
+    VARCHAR     nro_com[15];
+    VARCHAR     plan_iso[1];
+    VARCHAR     plan_sf[2];
+    VARCHAR     nro_cuo[3];
+    VARCHAR     cod_mon[3];
+
+
+EXEC SQL END DECLARE SECTION;
+
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+
+
+void main (int argc, char *argv[])
+{
+  FILE *fd;
+  char szFecha[5];
+  int ret;
+  long lcont;
+  char szFecAuxi[5];
+  char szFecAuxi2[3];
+
+  if (argc < 2)
+  {
+    printf("Uso: %s <MMDD> \n\n", argv[0]);
+    exit(-1);
+  }
+
+  printf("Apertura del archivo convert.deb\n\n");
+  if ( (fd=fopen("/online/log/convert.deb", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura de archivo convert.deb\n");
+    exit(-1);
+  }
+
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+
+  /* Guardo la fecha */
+/*  strcpy(szFecha, argv[1]);  */
+    strcpy( (char*) fec_loc.arr, argv[1]);
+    fec_loc.len = strlen( (char*) fec_loc.arr);
+
+  printf("\nComienza proceso de actualizacion...\n");
+  fprintf(fd, "\nComienza proceso de actualizacion...\n");
+  printf("\nFecha pasada como parametro: %s\n", szFecha);
+  fprintf(fd, "\nFecha pasada como parametro: %s\n", szFecha);
+
+
+   EXEC SQL
+        DECLARE cursor_term CURSOR FOR
+            SELECT substr(nro_caj_sf, 4,2), 
+                   cod_est,
+                   nro_trc,
+                   nro_caj_ori,
+                   nro_caj,
+                   fec_ven,
+                   nro_trx
+                   FROM cred_trx 
+                   WHERE cod_est = '12'
+                         AND substr(fec_loc,1,4) = :fec_loc
+                         AND fec_vtacard IS NULL;
+  
+  printf("\nValor devuelto despues del declare cursor : %i\n", sqlca.sqlcode);     
+
+    EXEC SQL
+       OPEN cursor_term;
+
+  printf("\nValor devuelto despues de open : %i\n", sqlca.sqlcode);     
+
+    EXEC SQL
+       FETCH cursor_term
+          INTO :nro_caj_sf, :cod_est, :nro_trc, :nro_caj_ori,
+               :nro_caj, :fec_ven, :nro_trx;
+
+  printf("\nValor devuelto despues de FETCH : %i\n", sqlca.sqlcode);     
+
+  while (sqlca.sqlcode == 0 || sqlca.sqlcode == -1405)
+  {
+ 
+    /* Codigo de estado 48 */
+    strcpy( (char*)cod_est.arr, "48");
+    cod_est.len = strlen( (char*) cod_est.arr);
+
+    /* Trace = NULL */
+    strcpy( (char*) nro_trc.arr, "");
+    nro_trc.len = strlen( (char*) nro_trc.arr);
+
+    /* El numero de caja pasa a nro_caj_ori (nro_caj pasa a ser 999 + nro_caj_sf) */
+
+    if ( 0 != strcspn( (char*) nro_caj.arr, "999") )
+    {
+      strcpy( (char*) nro_caj_ori.arr, (char*) nro_caj.arr);
+      nro_caj_ori.len = strlen( (char*) nro_caj_ori.arr );
+
+/*
+    EXEC SQL
+         SELECT nro_caj_ca 
+         INTO   :nro_caj_ca
+         from cred_term
+         where nro_caj=:nro_caj
+         and   nro_ca=:nro_ca
+         and   cod_con_cie='0';
+
+  printf("\nValor devuelto despues del select de term.: %i\n", sqlca.sqlcode);
+*/
+    }
+    else
+      fprintf("\n\nValor '999' en nro_caj.arr\n\n");
+
+
+    /* tnro_caj pasa a ser 999 + cnro_caj_sf */
+    strcpy( (char*) nro_caj.arr, "999");
+    strcat( (char*) nro_caj.arr, (char*) nro_caj_sf.arr);
+    nro_caj.len = strlen( (char*) nro_caj.arr );
+
+    /* switcheamos la fecha */
+    strcpy(szFecAuxi, (char*)fec_ven.arr);
+    strncpy(szFecAuxi2, &szFecAuxi[2], 2);
+
+    szFecAuxi[2] = '\0';
+    szFecAuxi2[2] = '\0';
+
+    strcpy( (char*) fec_ven.arr, szFecAuxi2);
+    strcat( (char*) fec_ven.arr, szFecAuxi);
+    fec_ven.len = strlen( (char*) fec_ven.arr );
+
+    
+  
+    EXEC SQL
+      UPDATE cred_trx
+         SET cod_est = :cod_est,
+             nro_trc = :nro_trc,
+             nro_caj_ori = :nro_caj_ori,
+             nro_caj = :nro_caj,
+             fec_ven = :fec_ven
+         WHERE cod_est = '12'
+               AND nro_trx = :nro_trx
+               AND nro_caj = :nro_caj_ori
+               AND substr(fec_loc,1,4) = :fec_loc
+               AND fec_vtacar IS NULL;
+     
+
+    printf("\nCodigo de estado (cod_est):  %s", cod_est.arr);
+    printf("\nNumero de trace  (nro_trc):  %s", nro_trc.arr);
+    printf("\nNumero CajOri (nro_caj_ori): %s", nro_caj_ori.arr);
+    printf("\nNumero de caja (nro_caj)  :  %s", nro_caj.arr);
+    printf("\nFecha vencimiento (fec_ven): %s", fec_ven.arr);
+
+    fprintf(fd, "\nCodigo de estado (cod_est):  %s", cod_est.arr);
+    fprintf(fd, "\nNumero de trace  (nro_trc):  %s", nro_trc.arr);
+    fprintf(fd, "\nNumero CajOri (nro_caj_ori): %s", nro_caj_ori.arr);
+    fprintf(fd, "\nNumero de caja (nro_caj)  :  %s", nro_caj.arr);
+    fprintf(fd, "\nFecha vencimiento (fec_ven): %s", fec_ven.arr);
+  printf("\nValor devuelto despues del select de term.: %i\n", sqlca.sqlcode);
+
+    EXEC SQL
+       COMMIT;
+
+    EXEC SQL
+       FETCH cursor_term
+          INTO :nro_caj_sf, :cod_est, :nro_trc, :nro_caj_ori,
+               :nro_caj, :fec_ven, :nro_trx;
+  }
+
+  EXEC SQL
+      CLOSE cursor_term;
+
+  printf("Saliendo del programa...");
+  fprintf(fd, "Saliendo del programa...");
+  fclose(fd);
+}
+

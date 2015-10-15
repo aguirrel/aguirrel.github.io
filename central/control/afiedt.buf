@@ -1,0 +1,2 @@
+select nro_ca,nro_caj_sf,tip_cie from cred_suc
+/

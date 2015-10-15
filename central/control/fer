@@ -1,0 +1,1 @@
+       if (strcmp((char *)cod_tar.arr,"07")==0)

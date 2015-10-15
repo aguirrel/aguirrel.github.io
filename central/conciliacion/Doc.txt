@@ -1,0 +1,36 @@
+La conciliaciòn se dispara ejecutando el script: controles
+
+Utiliza solamente dos ejecutables: el procpen y el checker
+
+Los fuentes que los originan son: el procpen.pc y el checker.pc
+
+Se pueden encontrar en el servidor C20 directorio:
+
+/home/codigos/coto/v220/eft_coto/kap/src/control (tambien en col)
+
+Utiliza los scripts:
+
+cronchec
+cronprocpen
+cargavta2
+chec2
+cargatot
+borra_vta_fecha_suc
+ochec2
+populsuctot
+popultertot
+
+Carga la tablas vtacard utilizando los archivos de control:
+
+vtacard.ctl
+vtacard3dig.ctl
+
+/* ************************** */
+
+Ultima correcciòn: 17 Feb 2000
+Objetivo: Aceptar sucursales de tres dìgitos
+Modificaciones: 
+1. Ampliaciòn del campo sucursal en tablas vtacard, vtacard_temp, vtatot y sucvtatot
+2. Modificaciòn de los scripts cargavta2, chec2, ochec2.sql
+3. Agregado del archivo de control vtacard3dig.ctl
+4. Modificaciòn del ejecutable procpen para tomar correctamente el path del archivo

@@ -1,0 +1,76 @@
+#definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+#Distintas versiones de ORACLE
+ORACLE_HOME=/u01/app/oracle/product/7.3.2
+#ORACLE_HOME=/home/oracle
+
+
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+CC=xlc
+CCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+CCC=xlC
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+PCC=proc
+PCCINC=${ORACLE_HOME}/proc/lib
+
+PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqltrxpendk=semantics userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqltrxpendk=syntax userid=u601/u601 lines=yes ireclen=132
+
+
+# Librerias de la base de datos relacional (ORACLE):
+ORACLELIBS= -lcore -lcv6 -lnlsrtl -lserver -lsql -lsqlnet -L${ORACLE_HOME}/lib ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp
+
+# Librerias propias
+USRLIBS= -L$(LFILES) -ldatabase
+
+# Librerias del sistema
+SYSLIBS= -lc -lm -lld /lib/crt0.o
+
+ALLIBS=$(USRLIBS) $(SYSLIBS) $(LIBS)
+
+#Existen tres versiones de librerias de ORACLE
+
+# ORACLE 7.2 (aix 3.2.5)
+#LIBS=-L./mensajes -L./eventos -L$(LFILES) -lmsgs -levents -ldatabase \
+#     -lcore -lcv6 -lnlsrtl -lora -lsql -lsqlnet -L${ORACLE_HOME}/lib \
+#     ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp -lc -lm -lld /lib/crt0.o -lbsd
+
+# ORACLE 7.2 (aix 4.1.4)
+#LIBS=-L${ORACLE_HOME}/lib -lsql ${ORACLE_HOME}/lib/osntab.o -lsqlnet -lora -lora -lnlsrtl3 -lc3v6 -lcore3 -lnlsrtl3 -lcore3 -lm -lld -lm -lm -lld -lm
+
+#ORACLE 7.3.2.3 (aix 4.1.4)
+LIBS= -L${ORACLE_HOME}/lib -lcore3 -lc3v6 -lnlsrtl3 -lserver -lgeneric -lcommon -lsqlnet -lncr -lepc -lsql -lclient
+
+.SUFFIXES: .pc
+
+.pc.o:
+	$(PCC) $(PCCFLG) iname=$<
+	$(CC) $(CCFLG) -c $*.c
+	@rm $*.c
+
+.C.o:
+#	$(CCC) $(CCCFLG) -c -DTERMTABLE_CLASS_TEST $<
+	$(CCC) $(CCCFLG) -c $<
+
+all: procpen 
+
+clean:
+	-rm *.o *.a *.c
+
+
+$(EFILES)trxpend: $(OFILES)trxpend.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)trxpend.o \
+                                 -o $(EFILES)trxpend
+
+$(OFILES)trxpend.o: trxpend.pc 
+	$(PCC) $(PCCFLG) iname=trxpend.pc
+	$(CC) $(CCFLG) -o$(OFILES)trxpend.o -c trxpend.c 
+	@rm trxpend.c
+

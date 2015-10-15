@@ -1,0 +1,198 @@
+/************************************************************************/
+/*									*/
+/* term.pc	    : Proceso que genera un listado con un detalle      */
+/*		      y la cantidad de operaciones por terminal.	*/
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 12/08/97						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <stdio.h>
+#include <string.h>
+
+#define OK	0
+#define NOOK	-1
+
+typedef struct
+{
+char	userid[21];
+char	passwd[21];
+} str_login;
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+VARCHAR		userid[20];
+VARCHAR		passwd[20];
+VARCHAR		nro_ca[2];
+VARCHAR		nro_caj[5];
+VARCHAR		nro_caj_sf[5];
+VARCHAR		cod_est[2];
+VARCHAR		fec_loc[12];
+VARCHAR		nro_trx[4];
+VARCHAR		mod_env[2];
+VARCHAR		cod_rta[2];
+VARCHAR		cod_aut[6];
+VARCHAR		nro_trc[6];
+VARCHAR		nro_tar[20];
+VARCHAR		nro_caj_ca[8];
+VARCHAR		monto[12];
+VARCHAR		fecha[6];
+short 		Nulltrc;
+short 		Nullaut;
+EXEC SQL END DECLARE SECTION;
+
+void init()
+{
+str_login	login_data;
+
+	strcpy(login_data.userid, "u601");
+	strcpy(login_data.passwd, "u601");
+	open_db(&login_data);
+}
+
+int open_db(str_login *data)
+{
+int	SqlErrno;
+
+	strcpy((char *)userid.arr, data->userid);
+	userid.len=strlen(data->userid);
+	strcpy((char *)passwd.arr, data->passwd);
+	passwd.len=strlen(data->passwd);
+
+	EXEC SQL
+	    CONNECT :userid IDENTIFIED BY :passwd;
+
+	if (sqlca.sqlcode!=OK)
+	{
+		SqlErrno=sqlca.sqlcode;
+		return NOOK;
+	}
+	SqlErrno=OK;
+	return OK;
+}
+
+
+void main(int argc, char* argv[])
+{
+FILE	*salida;
+FILE	*fd;
+int	cont=0;
+int	ret;
+char	suc_ant[6];
+char 	szmod_env[8];
+char 	sznro_ca[3];
+char 	sznro_caj[6];
+char 	szfecha[5];
+char 	filename[13];
+double  dmonto;
+double  dmonto_acum;
+long    lmonto;
+long    lmonto_acum=0;
+
+        if (argc!=3)
+        {
+            printf("Uso: term <nro de CA> <nro caj>\n");
+            exit(0);
+        }
+        strcpy((char *)sznro_ca, argv[1]);
+        strcpy((char *)nro_ca.arr, (char *)sznro_ca);
+        nro_ca.len=strlen((char *)nro_ca.arr);
+
+        strcpy((char *)sznro_caj, argv[2]);
+        strcpy((char *)nro_caj.arr, (char *)sznro_caj);
+        nro_caj.len=strlen((char *)nro_caj.arr);
+
+        strcpy(filename, sznro_caj);
+        printf("generando : [%s]\n", filename);
+
+	if ((salida=fopen(filename, "w"))==NULL)
+	{
+		printf("\nError en apertura de archivo [%s]\n", filename);
+		exit(0);       
+	}	
+
+	init();
+
+        EXEC SQL
+            SELECT nro_caj_ca
+            INTO :nro_caj_ca
+            FROM cred_term
+            WHERE nro_caj=:nro_caj and
+                  nro_ca=:nro_ca;
+
+        fprintf(salida, "\n\tListado de transacciones de terminal %s\n\n",
+                        nro_caj_ca.arr);
+        printf("Listado de transacciones de terminal %s\n", nro_caj_ca.arr);
+
+        EXEC SQL
+	    DECLARE cursor_ca CURSOR FOR
+	    SELECT cod_est, nro_trc, cod_aut, nro_tar,
+                   monto, mod_env, nro_trx, fec_loc
+	    FROM cred_trx
+            WHERE nro_ca=:nro_ca and
+            nro_caj=:nro_caj
+            ORDER BY fec_loc;
+ 
+	
+        EXEC SQL
+            OPEN cursor_ca;
+
+        memset(monto.arr, 0, sizeof(monto.arr));
+
+        EXEC SQL
+            FETCH cursor_ca
+            INTO :cod_est, :nro_trc:Nulltrc, :cod_aut:Nullaut, 
+                 :nro_tar, :monto, :mod_env, :nro_trx, :fec_loc;
+
+        printf("sqlcode: %ld\n", sqlca.sqlcode);
+
+        fprintf(salida, "EST\tCODAUT\tNRO TARJ\t\tMONTO\tTRX\tFECLOC\n");
+
+        while (sqlca.sqlcode==0)
+        {
+   
+            printf("monto: [%s]\n", monto.arr);
+            lmonto=atoi((char *)monto.arr);
+            lmonto_acum+=lmonto;
+            dmonto=(double)lmonto/100;
+            
+            printf("monto: %.2f\n", dmonto);
+
+            if (strncmp((char *)mod_env.arr, "00", strlen("00")))
+            {
+               strcpy(szmod_env, "offline");
+            }
+            else
+            {
+               strcpy(szmod_env, "online");
+            }
+
+            cont++;
+            fprintf(salida, "%s\t%s\t%s\t%.2f\t%s\t%s\n", 
+                             cod_est.arr, cod_aut.arr, nro_tar.arr, dmonto,
+                             nro_trx.arr, fec_loc.arr);
+
+            memset(monto.arr, 0, sizeof(monto.arr));
+
+            EXEC SQL
+                FETCH cursor_ca
+                INTO :cod_est, :nro_trc:Nulltrc, :cod_aut:Nullaut, 
+                     :nro_tar, :monto, :mod_env, :nro_trx, :fec_loc;
+
+        }
+        fprintf(salida, "\nTotal de transacciones: %ld\n", cont);
+        dmonto_acum=(double)lmonto_acum/100;
+        fprintf(salida, "Monto acumulado: %.2f\n", dmonto_acum);
+
+        EXEC SQL
+            CLOSE cursor_ca;
+
+        close(salida);		
+
+}

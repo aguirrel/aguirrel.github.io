@@ -1,0 +1,2 @@
+select * from cred_com where nro_caj_sf=90 and cod_tar=1
+/

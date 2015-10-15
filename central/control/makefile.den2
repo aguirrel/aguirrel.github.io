@@ -1,0 +1,141 @@
+#definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+#Distintas versiones de ORACLE
+ORACLE_HOME=/u01/app/oracle/product/7.3.2
+#ORACLE_HOME=/home/oracle
+
+
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+CC=xlc
+CCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+CCC=xlC
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) 
+
+PCC=proc
+PCCINC=${ORACLE_HOME}/proc/lib
+
+PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=semantics userid=u601/u601 lines=yes ireclen=132
+
+#PCCFLG=include=${PCCINC} release_cursor=yes code=ansi_c lname=/dev/null select_error=no sqlcheck=syntax userid=u601/u601 lines=yes ireclen=132
+
+
+# Librerias de la base de datos relacional (ORACLE):
+ORACLELIBS= -lcore -lcv6 -lnlsrtl -lserver -lsql -lsqlnet -L${ORACLE_HOME}/lib ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp
+
+# Librerias propias
+USRLIBS= -L$(LFILES) -ldatabase
+
+# Librerias del sistema
+SYSLIBS= -lc -lm -lld /lib/crt0.o
+
+ALLIBS=$(USRLIBS) $(SYSLIBS) $(LIBS)
+
+#Existen tres versiones de librerias de ORACLE
+
+# ORACLE 7.2 (aix 3.2.5)
+#LIBS=-L./mensajes -L./eventos -L$(LFILES) -lmsgs -levents -ldatabase \
+#     -lcore -lcv6 -lnlsrtl -lora -lsql -lsqlnet -L${ORACLE_HOME}/lib \
+#     ${ORACLE_HOME}/lib/osntab.o -bI:${ORACLE_HOME}/lib/mili.exp -lc -lm -lld /lib/crt0.o -lbsd
+
+# ORACLE 7.2 (aix 4.1.4)
+#LIBS=-L${ORACLE_HOME}/lib -lsql ${ORACLE_HOME}/lib/osntab.o -lsqlnet -lora -lora -lnlsrtl3 -lc3v6 -lcore3 -lnlsrtl3 -lcore3 -lm -lld -lm -lm -lld -lm
+
+#ORACLE 7.3.2.3 (aix 4.1.4)
+LIBS= -L${ORACLE_HOME}/lib -lcore3 -lc3v6 -lnlsrtl3 -lserver -lgeneric -lcommon -lsqlnet -lncr -lepc -lsql -lclient
+
+.SUFFIXES: .pc
+
+.pc.o:
+	$(PCC) $(PCCFLG) iname=$<
+	$(CC) $(CCFLG) -c $*.c
+	@rm $*.c
+
+.C.o:
+#	$(CCC) $(CCCFLG) -c -DTERMTABLE_CLASS_TEST $<
+	$(CCC) $(CCCFLG) -c $<
+
+all: listpend     
+
+clean:
+	-rm *.o *.a *.c
+
+$(EFILES)listpendupd: $(OFILES)listpendupd.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)listpendupd.o \
+                                 -o $(EFILES)listpendupd
+
+$(OFILES)listpendupd.o: listpendupd.pc 
+	$(PCC) $(PCCFLG) iname=listpendupd.pc
+	$(CC) $(CCFLG) -o$(OFILES)listpendupd.o -c listpendupd.c 
+	@rm listpendupd.c
+
+
+$(EFILES)procdev: $(OFILES)procdev.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)procdev.o \
+                                 -o $(EFILES)procdev
+
+$(OFILES)procdev.o: procdev.pc 
+	$(PCC) $(PCCFLG) iname=procdev.pc
+	$(CC) $(CCFLG) -o$(OFILES)procdev.o -c procdev.c 
+	@rm procdev.c
+
+$(EFILES)listpend2: $(OFILES)listpend2.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)listpend2.o \
+                                 -o $(EFILES)listpend2
+
+$(OFILES)listpend2.o: listpend2.pc 
+	$(PCC) $(PCCFLG) iname=listpend2.pc
+	$(CC) $(CCFLG) -o$(OFILES)listpend2.o -c listpend2.c 
+	@rm listpend2.c
+
+
+$(EFILES)c: $(OFILES)c.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)c.o \
+                                 -o $(EFILES)c
+
+$(OFILES)c.o: c.pc 
+	$(PCC) $(PCCFLG) iname=c.pc
+	$(CC) $(CCFLG) -o$(OFILES)c.o -c c.c 
+	@rm c.c
+
+gencie: $(OFILES)gencie.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)gencie.o \
+                                 -o $(EFILES)gencie
+
+$(OFILES)gencie.o: gencie.pc 
+	$(PCC) $(PCCFLG) iname=gencie.pc
+	$(CC) $(CCFLG) -o$(OFILES)gencie.o -c gencie.c 
+	@rm gencie.c
+
+listpend: $(OFILES)listpend.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)listpend.o \
+                                 -o $(EFILES)listpend
+
+$(OFILES)listpend.o: listpend.pc 
+	$(PCC) $(PCCFLG) iname=listpend.pc
+	$(CC) $(CCFLG) -o$(OFILES)listpend.o -c listpend.c 
+	@rm listpend.c
+
+listpend: $(OFILES)listpend.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)listpend.o \
+                                 -o $(EFILES)listpend
+
+$(OFILES)listpend.o: listpend.pc 
+	$(PCC) $(PCCFLG) iname=listpend.pc
+	$(CC) $(CCFLG) -o$(OFILES)listpend.o -c listpend.c 
+	@rm listpend.c
+
+
+listpend: $(OFILES)listpend.o 
+	$(CCC) $(CCCFLG) $(LIBS) $(OFILES)listpend.o \
+                                 -o $(EFILES)listpend
+
+$(OFILES)listpend.o: listpend.pc 
+	$(PCC) $(PCCFLG) iname=listpend.pc
+	$(CC) $(CCFLG) -o$(OFILES)listpend.o -c listpend.c 
+	@rm listpend.c
+

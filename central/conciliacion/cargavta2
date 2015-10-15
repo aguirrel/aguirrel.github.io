@@ -1,0 +1,19 @@
+ARCHSUC=/online/chec/equipos
+DIRWORK=/online/chec
+ANIO=`date +%Y`
+FECHA=`cat /online/log/fecha.dat`
+
+for SUC in `cat $ARCHSUC`
+do
+    sucaux=`echo $SUC|cut -b4-`
+    fecaux=$ANIO$FECHA
+    sqlplus u601/u601 @/online/chec/control/borra_vta_fecha_suc $fecaux $sucaux
+    if test ${#sucaux} -eq 2
+    then 
+        sqlload u601/u601 control=vtacard data=$DIRWORK/$SUC/vtacard.$FECHA 
+    else
+        sqlload u601/u601 control=vtacard3dig data=$DIRWORK/$SUC/vtacard.$FECHA
+    fi
+#   sqlplus u601/u601 @/online/chec/control/upd_fecha $fecaux
+#   sqlplus u601/u601 @/online/chec/control/upd_sucur $sucaux
+done

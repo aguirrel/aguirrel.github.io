@@ -1,0 +1,7 @@
+fecaux=`cat /online/log/fecha.dat`
+ANIO=`date +%Y`
+#ANIO="1999"
+fecha=$ANIO$fecaux
+#fecha=19991103
+sqlplus -s u601/u601 @/online/visual/populsuctot $fecha
+sqlplus -s u601/u601 @/online/visual/popultertot $fecha

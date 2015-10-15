@@ -1,0 +1,386 @@
+/*
++------------------------------------------------------------------------------+
+|                   Copyright (C) 2003 - COTO CICSA                            |
++-----------------+------------------------------------------------------------+
+| F. Fuente       | ChecDif.pc                                                 |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+| Descripcion     | Proceso que genera un archivo con las posibles             |
+|                 | transacciones con problemas en CREDITO                     |
++-----------------+------------------------------------------------------------+
+*/
+#include <stdio.h>
+#include <time.h>
+#include <fcntl.h>
+#include <string.h>
+#include <stdarg.h>
+
+EXEC SQL INCLUDE SQLCA;
+
+#define NOMBPROCESO "ChecDif"
+
+#define FOK	0
+#define FIN	1
+#define SIG	2
+
+#define ARCHLOG	'L'
+#define ARCHIVO	'A'
+
+/* Definiciones de Oracle */
+#define CPVAR(X)			X.arr 
+#define CPMEM(X)			X.arr[X.len] = 0
+#define SQLCODE				abs(sqlca.sqlcode)
+#define VAR_TO_STR( Y, X )  ( memcpy( Y, X.arr, X.len ), Y[X.len]=0x00 )
+#define STR_TO_VAR( Y, X )  ( Y.len = (unsigned short)strlen( X ), \
+                                   memcpy( Y.arr, X, Y.len ) )
+
+/* Prototipos de funciones */
+void pvFinLog(FILE **prLogStream);
+void pvLog( FILE *, char, int, const char *, ... );
+int  piIniLog(FILE **prLogStream, char * szNombreArchivo);
+void pvArmarLinea(char *, int );
+
+EXEC SQL BEGIN DECLARE SECTION;
+	double		MONTO;
+	VARCHAR		CUSUARIO	[8+1];
+	VARCHAR		NRO_SUC		[3+1];
+	VARCHAR		NRO_CAJ		[5+1];
+	VARCHAR		NRO_TRX		[4+1];
+	VARCHAR		NRO_CA		[2+1];
+	VARCHAR		NRO_CAJ_SF	[5+1];  
+	VARCHAR		COD_TAR		[2+1];
+	VARCHAR		NRO_TAR	   [20+1];
+	VARCHAR		FEC_LOC    [10+1];
+	VARCHAR		MOD_ENV		[2+1];
+	VARCHAR 	MOD_ING		[2+1];
+	VARCHAR		PLAN_SF		[2+1];
+	VARCHAR		NRO_COM	   [15+1];
+	VARCHAR		COD_EST		[2+1];
+	VARCHAR		NRO_CAJ_CA	[8+1];
+	VARCHAR		FECHA_MIN  [10+1];
+	VARCHAR		FECHA_MAX  [10+1];
+	VARCHAR		MMDD_MIN	[4+1];
+	VARCHAR		MMDD_MAX	[4+1];
+	VARCHAR		COD_TRX		[2+1];
+	VARCHAR		MOVIMIE		[1+1];
+	VARCHAR		FEC_VTACARD [4+1];
+	VARCHAR		COD_AUT		[6+1];
+	VARCHAR		ASO_REG		[1+1];
+EXEC SQL END DECLARE SECTION;
+
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvIniLog                                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion para abrir el archivo de log                       |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+int piIniLog(FILE **prLogStream, char * szNombreArchivo)
+{
+	int iRet= 0;
+	char szArchivo[128];
+
+	if ((*prLogStream = fopen(szNombreArchivo, "wt"))==NULL)
+	{
+		iRet = -1;
+	}
+	return (iRet);
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvFinLog                                                   |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion para cerrar el archivo de log                      |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+void pvFinArch(FILE **prLogStream)
+{
+	if (*prLogStream)
+	{
+		fclose(*prLogStream);
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvLog                                                      |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion para escribir los mensajes en el archivo de log    |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+*/
+void pvLog( FILE *prLogStream, char cLog, int iCont, const char * szMascara, ... )
+{
+    char szBuffer[1500], szBuffer2[1500], szFecha[12], szHora[10];
+    va_list pcListaParametros;
+
+    struct tm *newtime;
+    time_t long_time;
+
+    /* Obtiene  la fecha y hora */
+    time( &long_time );                
+    newtime = localtime( &long_time ); 
+    sprintf(szFecha, "%02d/%02d/%04d", newtime->tm_mday, newtime->tm_mon+1, 
+			1900+newtime->tm_year);
+    sprintf(szHora, "%02d:%02d:%02d", newtime->tm_hour, newtime->tm_min, 
+			newtime->tm_sec);
+    
+    va_start( pcListaParametros, szMascara );
+
+	/* Guarda la información */
+    if( prLogStream )  
+    {               
+            if (cLog==ARCHLOG)
+			{
+				sprintf( szBuffer, "%10.10s %8.8s %s\n", szFecha, szHora, szMascara );
+            }
+			else
+			{
+				sprintf( szBuffer, "%s\n", szMascara );
+			}
+			vsprintf( szBuffer2, szBuffer, pcListaParametros );
+			fprintf( prLogStream, szBuffer2 );
+            fflush( prLogStream );
+    }
+
+	/* Finaliza el proceso si es error critico */
+	if ( ( iCont==FIN ) || ( iCont==FOK ) )
+	{
+		if ( prLogStream )
+		{
+			fclose(prLogStream);
+		}
+		exit(iCont);
+	}
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | pvArmarLinea                                               |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Arma linea para escribir en el archivo                     |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+void pvArmarLinea(char *szLinea, int iLong)
+{
+	CPMEM(NRO_SUC); CPMEM(NRO_CAJ); CPMEM(NRO_TRX); CPMEM(NRO_CA); CPMEM(NRO_CAJ_SF);
+	CPMEM(COD_TAR); CPMEM(NRO_TAR); CPMEM(FEC_LOC); CPMEM(MOD_ENV); CPMEM(MOVIMIE);
+	CPMEM(MOD_ING); CPMEM(PLAN_SF); CPMEM(NRO_COM); CPMEM(COD_EST); CPMEM(NRO_CAJ_CA);
+	CPMEM(COD_TRX); CPMEM(ASO_REG); CPMEM(COD_AUT); CPMEM(FEC_VTACARD);
+
+	memset(szLinea, 0, sizeof(iLong));
+	sprintf(szLinea, "%01.1s|%03.3s|%05.5s|%05.5s|%04.4s|%02.2s|"
+					 "%02.2s|%020.20s|%011.02f|%010.10s|%02.2s|"
+					 "%03.3s|%02.2s|%015.15s|%08.8s|%02.2s|%06.6s|%04.4s|%02.2s|%01.1s" ,
+						CPVAR(MOVIMIE),
+						CPVAR(NRO_SUC), CPVAR(NRO_CAJ_SF), CPVAR(NRO_CAJ), CPVAR(NRO_TRX), CPVAR(NRO_CA), 
+						CPVAR(COD_TAR), CPVAR(NRO_TAR), MONTO/100, CPVAR(FEC_LOC), CPVAR(MOD_ENV),
+						CPVAR(MOD_ING), CPVAR(PLAN_SF), CPVAR(NRO_COM), CPVAR(NRO_CAJ_CA),
+						CPVAR(COD_TRX), CPVAR(COD_AUT), CPVAR(FEC_VTACARD), CPVAR(COD_EST), CPVAR(ASO_REG) );		
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | main                                                       |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Proceso principal de la aplicacion                         |
+|                 | Parametros: [Fecha de las operaciones MMDD]                | 
+|                 | Ejemplo: ChecDif 0612                                      | 
++-----------------+------------------------------------------------------------+
+*/
+void main (int argc, char **argv)
+{
+	/* Definicion de variables */
+	int iError= 0;
+	FILE *fdLog = NULL;
+	FILE *fdSal = NULL;
+	char szLinea[512];
+
+	/* Abre archivo de log */
+	sprintf(szLinea, "%s%s", NOMBPROCESO, ".log");
+	if (piIniLog(&fdLog, szLinea))
+	{
+		printf("Error al abrir archivo de log\n");
+		exit(1);
+	}
+
+	/* Inicia proceso */
+	pvLog(fdLog, ARCHLOG, SIG, "Inicio de proceso");
+
+	/* Verifica que exista el parametro */
+	if ( (argc!=2) || (strlen(argv[1])!=4) )
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error en parametros. Sintaxis: MMDD");
+	}
+	
+	/* Abre archivo de salida */ 
+	sprintf(szLinea, "%s%s%s", NOMBPROCESO, argv[1], ".txt");
+	if (piIniLog(&fdSal, szLinea))
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al abrir archivo de salida");
+	}
+
+	/* Muestra el parametro de ejecucion */
+	pvLog(fdLog, ARCHLOG, SIG, "Parametro de ejecucion: %s", argv[1]);
+
+	/* Obtiene usuario y password */
+	STR_TO_VAR(CUSUARIO, "/");
+
+	/* Se conecta a BD */
+	EXEC SQL
+		CONNECT :CUSUARIO; 
+	
+	/* Verifica conexion */
+	if (SQLCODE!=0)
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al conectar a BD");
+	}
+
+	/* Toma el MMDD inicial */
+	STR_TO_VAR(MMDD_MIN, argv[1]);
+
+	/* Arma el MMDD final */
+	EXEC SQL
+		SELECT SUBSTR(TO_CHAR(TO_DATE(:MMDD_MIN, 'MMDD')+1,'MMDD'),1,4) 
+		INTO :MMDD_MAX	
+		FROM DUAL;
+
+	/* Verifica correccion */
+	if (SQLCODE!=0)
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al obtener fecha");
+	}
+	
+	/* Obtiene la fecha inicial */
+	CPMEM(MMDD_MIN);
+	sprintf(szLinea, "%s060000", CPVAR(MMDD_MIN));
+	STR_TO_VAR(FECHA_MIN, szLinea);
+	
+	/* Obtiene la fecha final */
+	CPMEM(MMDD_MAX);
+	sprintf(szLinea, "%s055959", CPVAR(MMDD_MAX));
+	STR_TO_VAR(FECHA_MAX, szLinea);
+			
+	/* Recupera todas las empresas y los dias de resguardo */
+	EXEC SQL
+		DECLARE CursorTrx CURSOR FOR
+			SELECT 'C' , NRO_SUC  ,  NRO_CAJ , NRO_TRX  , NRO_CA   , NRO_CAJ_SF , 
+						 COD_TAR  ,  NRO_TAR , MONTO    , FEC_LOC  , MOD_ENV    , 
+						 MOD_ING  ,  PLAN_SF , NRO_COM  , COD_EST  , NRO_CAJ_CA ,
+						 COD_TRX  ,  NVL(FEC_VTACARD,'    ')       , NVL(COD_AUT,'      ')    , '0'   
+			FROM CRED_TRX
+			WHERE ( (FEC_LOC >= :FECHA_MIN) AND (FEC_LOC <= :FECHA_MAX) ) AND
+				  ( ( COD_EST IN ('01','08','10','11','12','19','21','25','43','57') ) OR
+					( (COD_EST = '04') AND (FEC_VTACARD IS NULL) ) )
+				UNION		
+			SELECT 'A' , NRO_SUC  ,  NRO_CAJ , NRO_TRX  , NRO_CA   , NRO_CAJ_SF , 
+						 COD_TAR  ,  NRO_TAR , MONTO    , FEC_LOC  , MOD_ENV    , 
+						 MOD_ING  ,  PLAN_SF , NRO_COM  , COD_EST  , NRO_CAJ_CA ,
+						 COD_TRX  ,  NVL(FEC_VTACARD,'    ')       , NVL(COD_AUT,'      ')    , '0'
+			FROM CRED_ANUL_TRX
+			WHERE ( (FEC_LOC >= :FECHA_MIN) AND (FEC_LOC <= :FECHA_MAX) ) AND
+				  ( ( COD_EST IN ('01','08','10','11','12','19','21','25','43','57') ) )
+				UNION
+			SELECT 'R' , NRO_SUC  ,  NRO_CAJ , NRO_TRX  , NRO_CA   , NRO_CAJ_SF , 
+						 COD_TAR  ,  NRO_TAR , MONTO    , FEC_LOC  , MOD_ENV    , 
+						 MOD_ING  ,  PLAN_SF , NRO_COM  , COD_EST  , NRO_CAJ_CA ,
+						 COD_TRX  ,  NVL(FEC_VTACARD,'    ')       , NVL(COD_AUT,'      ')    , '0'
+			FROM CRED_REV_ANUL_TRX
+			WHERE ( (FEC_LOC >= :FECHA_MIN) AND (FEC_LOC <= :FECHA_MAX) ) AND
+				  ( ( COD_EST IN ('01','08','10','11','12','19','21','25','43','57') ) )
+			ORDER BY NRO_SUC, NRO_CAJ_SF, NRO_CAJ, NRO_TRX, COD_EST;
+
+
+	EXEC SQL
+		OPEN CursorTrx;
+
+	if (SQLCODE!=0)
+	{
+		pvLog(fdLog, ARCHLOG, FIN, "Error al abrir cursor [%d]", SQLCODE);
+	}
+
+	do
+	{
+		EXEC SQL
+			FETCH CursorTrx INTO
+				:MOVIMIE ,
+				:NRO_SUC , :NRO_CAJ , :NRO_TRX , :NRO_CA  , :NRO_CAJ_SF ,
+				:COD_TAR , :NRO_TAR , :MONTO   , :FEC_LOC , :MOD_ENV    , 
+				:MOD_ING , :PLAN_SF , :NRO_COM , :COD_EST , :NRO_CAJ_CA ,
+				:COD_TRX , :FEC_VTACARD,         :COD_AUT , :ASO_REG;
+
+		iError = SQLCODE;
+		
+		switch (iError)
+		{
+			case 0:
+				pvArmarLinea(szLinea, sizeof(szLinea));
+						
+				pvLog(fdSal, ARCHIVO, SIG, szLinea);				
+
+				/* Si el estado no es aprobada, busca si existe otro registro para esa transaccion */
+				if (strcmp(CPVAR(COD_EST), "04") != 0)
+				{
+					/* Declara el cursor */
+					EXEC SQL
+						DECLARE CursorErrores CURSOR FOR
+							SELECT 'C' , 
+									NRO_SUC  ,  NRO_CAJ , NRO_TRX  , NRO_CA   , NRO_CAJ_SF , 
+									COD_TAR  ,  NRO_TAR , MONTO    , FEC_LOC  , MOD_ENV    , 
+									MOD_ING  ,  PLAN_SF , NRO_COM  , COD_EST  , NRO_CAJ_CA ,
+									COD_TRX  ,  NVL(FEC_VTACARD,'    ')       , NVL(COD_AUT,'      ') , '1'
+							FROM CRED_TRX
+							WHERE ( (FEC_LOC>=:FECHA_MIN) AND (FEC_LOC<=:FECHA_MAX) ) AND
+								  ( (COD_EST != :COD_EST) AND (NRO_SUC = :NRO_SUC) AND (NRO_CAJ_SF = :NRO_CAJ_SF) AND
+									(NRO_CAJ=:NRO_CAJ) AND (NRO_TRX = :NRO_TRX) AND (NRO_TAR=:NRO_TAR) AND
+									(MONTO=:MONTO) ) ;
+
+					/* Abre el cursor */
+					EXEC SQL
+						OPEN CursorErrores;
+
+					/* Procesa los registros */
+					if (SQLCODE==0)
+					{
+						while (SQLCODE==0)
+						{
+							EXEC SQL
+								FETCH CursorErrores INTO
+										:MOVIMIE ,
+										:NRO_SUC , :NRO_CAJ , :NRO_TRX , :NRO_CA  , :NRO_CAJ_SF ,
+										:COD_TAR , :NRO_TAR , :MONTO   , :FEC_LOC , :MOD_ENV    , 
+										:MOD_ING , :PLAN_SF , :NRO_COM , :COD_EST , :NRO_CAJ_CA ,
+										:COD_TRX , :FEC_VTACARD        , :COD_AUT , :ASO_REG;
+
+							if (SQLCODE==0)
+							{
+								pvArmarLinea(szLinea, sizeof(szLinea));
+
+								pvLog(fdSal, ARCHIVO, SIG, szLinea);					
+							}
+						}
+					}
+
+					/* Cierra el cursor */
+					EXEC SQL
+						CLOSE CursorErrores;
+				}
+				break;
+			case 1403:
+				pvLog(fdLog, ARCHLOG, SIG, "Fin de recuperacion de registros");
+				break;
+			default:
+				pvLog(fdLog, ARCHLOG, SIG, "Error al recuperar registros [%d]", SQLCODE);
+		}
+	} while (iError==0);
+
+	/* Cierra el cursor */
+	EXEC SQL
+		CLOSE CursorTrx;
+								
+	/* Retorna correctamente */
+	pvLog(fdLog, ARCHLOG, FOK, "Fin de la aplicacion");
+
+} 
+
+

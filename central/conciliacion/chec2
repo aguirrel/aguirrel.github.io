@@ -1,0 +1,15 @@
+ARCHSUC=/online/chec/equipos
+FECHA=`cat /online/log/fecha.dat`
+ANIO=`date +%Y`
+#ANIO=1999
+
+#sqlplus u601/u601 @indchec
+
+for SUC in `cat $ARCHSUC`
+do
+    echo Procesando $SUC 
+    sucaux=`echo $SUC|cut -b4-`
+    sqlplus u601/u601 @/online/chec/control/ochec2 $ANIO$FECHA $sucaux $FECHA REPROCESAR
+done
+
+#sqlplus u601/u601 @dropindchec

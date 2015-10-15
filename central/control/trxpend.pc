@@ -1,0 +1,122 @@
+/************************************************************************/
+/*									
+/* trxpend.pc : Obtiene la cantidad de transacciones pendientes
+/*								
+/************************************************************************/
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR	userid[20];
+	VARCHAR descri[30+1];
+	VARCHAR centro[2+1];
+	VARCHAR codest[2];
+EXEC SQL END DECLARE SECTION;
+
+int main()
+{
+	int iCont;
+	int iPendientes;
+	int iEsperaResp;
+	int iConReverso;
+	int iNroPasadas;
+	int iAcumPendientes = 0;
+	int iAcumEsperaResp = 0;
+	int iAcumConReverso = 0;
+	
+    strcpy((char*)userid.arr, "/");
+    userid.len = 1;
+
+	EXEC SQL 
+		CONNECT :userid;
+
+	if ( sqlca.sqlcode != 0 )
+	{
+		printf("Error al conectarse a la Base de Datos\n");
+		return -1;
+	}
+
+	EXEC SQL
+		DECLARE CURSOR_CA CURSOR FOR
+			SELECT NRO_CA, DESCRIP
+			FROM CRED_CAS;
+
+	EXEC SQL
+		OPEN CURSOR_CA;
+
+	EXEC SQL 
+		FETCH CURSOR_CA
+		INTO :centro, :descri;
+
+	printf("\n");
+	printf("    CENTRO AUTORIZADOR       PENDIENTES      EN VIAJE       REVERSOS \n");
+	printf("  ======================     ==========     ==========     ==========\n");
+
+	while (sqlca.sqlcode==0)
+	{
+		iNroPasadas = 1;
+
+		while ( iNroPasadas <= 3 )
+		{
+			switch (iNroPasadas)
+			{
+			case 1:	
+				strcpy((char*)codest.arr,"00"); 
+				break;
+			case 2:	
+				strcpy((char*)codest.arr,"01"); 
+				break;
+			case 3:	
+				strcpy((char*)codest.arr,"06"); 
+				break;
+			}
+			codest.len = strlen((char*)codest.arr);
+
+			EXEC SQL
+				SELECT count(*)
+				INTO :iCont
+				FROM CRED_TRX
+				WHERE NRO_CA  = :centro 
+				  AND COD_EST = :codest;
+
+			switch (iNroPasadas)
+			{
+			case 1:	
+				iPendientes      = iCont; 
+				iAcumPendientes += iCont;
+				break;
+			case 2:	
+				iEsperaResp      = iCont; 
+				iAcumEsperaResp += iCont;
+				break;
+			case 3:	
+				iConReverso      = iCont; 
+				iAcumConReverso += iCont;
+				break;
+			}
+			
+			iNroPasadas++; 
+		}
+		centro.arr[centro.len] = 0;
+		descri.arr[descri.len] = 0;
+		printf("  %2s-%.19s     %10d     %10d     %10d\n", 
+				centro.arr, descri.arr, iPendientes, iEsperaResp, iConReverso);
+
+		EXEC SQL 
+			FETCH CURSOR_CA
+			INTO :centro, :descri;
+	}
+
+	printf("  ======================     ==========     ==========     ==========\n");
+	printf("         TOTALES             %10d     %10d     %10d\n", 
+				iAcumPendientes, iAcumEsperaResp, iAcumConReverso);
+	printf("\n");
+
+	EXEC SQL
+		CLOSE CURSOR_CA;
+
+	return 0;
+}

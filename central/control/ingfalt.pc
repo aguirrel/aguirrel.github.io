@@ -1,0 +1,277 @@
+/************************************************************************/
+/*									*/
+/* ingfalt.pc	    : Funcion para ingresar las trxs faltantes          */
+/*		      a la tabla de credito cred_trx.            	*/
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 20/06/97						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+ 
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+extern int	SqlErrno;
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+     
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_trx[4];
+    VARCHAR     mod_env[2];
+    VARCHAR     cod_tar[2];
+    VARCHAR     nro_ca[2];
+    VARCHAR     cod_trx[2];
+    VARCHAR     cod_est[2];
+    VARCHAR     can_ret[4];
+    VARCHAR     nro_lot[3];
+    VARCHAR     cod_pro[6];
+    VARCHAR     monto[12];
+    VARCHAR     nro_tar[20];
+    VARCHAR     nro_trc[6];
+    VARCHAR     fec_loc[10];
+    VARCHAR     fec_ven[4]; 
+    VARCHAR     mod_ing[3];
+    VARCHAR     nro_tic[4]; 
+     
+EXEC SQL END DECLARE SECTION;
+
+
+void getFechaActual(char *fecha)
+{
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d/%02d/%02d", newtime->tm_mday, 
+	           newtime->tm_mon+1, newtime->tm_year);
+}
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+	  SqlErrno=sqlca.sqlcode;
+	  return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+
+
+void main (int argc, char *argv[])
+{
+     char buffer[256];
+
+     char fec[15];
+     int longitud;
+     double aux;
+     int  nro;
+     char descrip[8];
+     char modo[4];
+     char montofec[21];
+     char fecha_ant[5];
+     char entrada[15];
+     char sznro_suc[4];
+     char szmod_env[3];
+     char sznro_ca[3];
+     char szcod_trx[3];
+     char szcod_est[3];
+     char szcan_ret[5];
+     char sznro_lot[4];
+     char szcod_pro[7];
+     char szfec_loc[11];
+     char szfec_ven[5]; 
+     char szmod_ing[4];
+     char sznro_tic[5]; 
+     char sznro_trc[7];
+     int lnro_trc;
+     char nro_tar_aux[16];
+     char sznro_trx[5];
+     char sznro_caj[5];
+     char szcod_tar[3];
+     char szmonto[12];
+     char sznro_tar[21];
+
+     init();
+
+     printf("\nNro de caja: ");
+     scanf("%s", sznro_caj);
+     printf("Nro de transaccion: ");
+     scanf("%s", sznro_trx);
+     printf("\nFecha local: <MMDDHHMISS>");
+     scanf("%s", szfec_loc);
+     printf("\nCodigo de tarjeta: ");
+     scanf("%s", szcod_tar);
+     printf("\nMonto: ");
+     scanf("%s", szmonto);
+     printf("\nNro de tarjeta: ");
+     scanf("%s", sznro_tar);
+
+
+       strcpy(sznro_suc, "001");
+       strcpy((char *)nro_suc.arr, sznro_suc);
+       nro_suc.len=strlen(sznro_suc);
+
+       strcpy((char *)nro_caj.arr, sznro_caj);
+       nro_caj.len=strlen(sznro_caj);
+
+       strcpy((char *)nro_trx.arr, sznro_trx);
+       nro_trx.len=strlen(sznro_trx);
+
+       strcpy(szmod_env, "01");
+       strcpy((char *)mod_env.arr, szmod_env);
+       mod_env.len=strlen(szmod_env);
+
+       strcpy((char *)cod_tar.arr, szcod_tar);
+       cod_tar.len=strlen(szcod_tar);
+
+       EXEC SQL
+           SELECT nro_ca
+           INTO :nro_ca
+           FROM cred_tarj
+           WHERE cod_tar=:cod_tar;
+
+       printf("Nro de CA.: %s\n", nro_ca.arr); 
+  
+       strcpy(szcod_trx, "00");
+       strcpy((char *)cod_trx.arr, szcod_trx);
+       cod_trx.len=strlen(szcod_trx);
+
+/* Pongo codigo de estado 39 para no enviar a CA, ya que no tenemos la fecha de caducidad de la tarjeta   */
+
+       strcpy(szcod_est, "39");
+       strcpy((char *)cod_est.arr, szcod_est);
+       cod_est.len=strlen(szcod_est);
+
+       strcpy(szcan_ret, "0000");
+       strcpy((char *)can_ret.arr, szcan_ret);
+       can_ret.len=strlen(szcan_ret);
+
+
+/* Ver nro de lote:
+   Lo debo obtener de la tabla de terminales */
+
+       EXEC SQL
+           SELECT nro_lot
+           INTO :nro_lot
+           FROM cred_term
+           WHERE nro_caj='99902';
+
+
+       strcpy(szcod_pro, "000000");
+       strcpy((char *)cod_pro.arr, szcod_pro);
+       cod_pro.len=strlen(szcod_pro);
+
+       strcpy((char *)monto.arr, szmonto);
+       monto.len=strlen(szmonto);
+
+       strcpy(nro_tar_aux, &sznro_tar[4]); 
+       nro_tar_aux[16]='\0';
+       strcpy((char *)nro_tar.arr, nro_tar_aux);
+       nro_tar.len=strlen(nro_tar_aux);
+       printf("Nro de tarjeta: %s\n", nro_tar_aux);
+
+       strcpy((char *)fec_loc.arr, szfec_loc);
+       fec_loc.len=strlen(szfec_loc);
+
+       strcpy((char *)szfec_ven, "9912");
+       strcpy((char *)fec_ven.arr, szfec_ven);
+       fec_ven.len=strlen(szfec_ven);
+
+       strcpy(szmod_ing, "012");
+       strcpy((char *)mod_ing.arr, szmod_ing);
+       mod_ing.len=strlen(szmod_ing);
+
+       strcpy((char *)sznro_tic, "0000");
+       strcpy((char *)nro_tic.arr, sznro_tic);
+       nro_tic.len=strlen(sznro_tic);
+
+       EXEC SQL
+           INSERT
+              INTO cred_trx (NRO_SUC, 
+                             NRO_CAJ, 
+                             NRO_TRX, 
+                             MOD_ENV, 
+                             COD_TAR,
+                             NRO_CA,
+                             COD_TRX,
+                             COD_EST,
+                             CAN_RET,
+                             NRO_LOT,
+                             COD_PRO,
+                             MONTO,
+                             NRO_TAR,
+                             FEC_LOC,
+                             FEC_VEN,
+                             MOD_ING,
+                             NRO_TIC)
+
+              VALUES (:nro_suc, 
+                      :nro_caj, 
+                      :nro_trx, 
+                      :mod_env, 
+                      :cod_tar,
+                      :nro_ca,
+                      :cod_trx,
+                      :cod_est,
+                      :can_ret,
+                      :nro_lot,
+                      :cod_pro,
+                      :monto, 
+                      :nro_tar,
+                      :fec_loc,
+                      :fec_ven,
+                      :mod_ing,
+                      :nro_tic);
+
+       printf("sqlcode: %ld\n", sqlca.sqlcode);
+
+       EXEC SQL
+           COMMIT;  
+ 
+}

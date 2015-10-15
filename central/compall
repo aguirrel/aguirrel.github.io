@@ -1,0 +1,26 @@
+cd ..
+cd bin
+rm -e *
+cd ..
+cd lib
+rm -e *
+cd ..
+cd obj
+rm -e *
+cd ..
+cd src
+cd mensajes_5
+make -f makeLinux
+cd ..
+cd oracle_5
+make -f makeLinux
+cd ..
+cd events_5
+make -f makeLinux
+cd ..
+cd objects_5
+make -f makeLinux CierreLoteCASuc
+make -f makeLinux Daemon
+make -f makeLinux TCPDaemon
+make -f makeLinux X25Daemon
+cd ../../bin

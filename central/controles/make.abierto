@@ -1,0 +1,61 @@
+#WORKING DIRECTORY
+WD=/home/desa/codigos/coto/v220/eft_coto
+
+#PRODUCT DIRECTORY 
+PD=/col
+
+#LEVEL DIRECTORY
+LD=/src/controles
+
+#OBJ DIRECTORY
+OD=$(WD)$(PD)$(LD)
+
+#SOURCE DIRECTORY
+SD=$(WD)$(PD)$(LD)
+
+#INCLUDE DIRECTORY
+ID=$(WD)$(PD)$(LD)
+
+#TARGET DIRECTORY
+TD=$(WD)$(PD)/bin
+
+#COMPILER FLAGS
+CFLAGS= -g -qalign=packed
+
+
+#######
+#RULES#
+#######
+
+INFILE=abierto
+
+#FINAL PRODUCT RULE
+PRODUCT=$(TD)/$(INFILE)
+
+#LIBRARY DIRECTORIES 
+
+LIB2=-L${ORACLE_HOME}/lib -lclntsh ${ORACLE_HOME}/lib/osntabst.o -lclient8 -lgeneric8 -lcommon8 -lm  
+
+#INCLUDE RULE 
+INC= -I$(ID)
+
+PCCFLAGS = 	ireclen=300 include=$(ID) \
+		include=../../ctrl/napav2/include
+
+all: $(PRODUCT)
+
+$(PRODUCT): $(SD)/$(INFILE).o 
+	cc_r -o $(INFILE) $(CFLAGS) $(LIB2) $(SD)/$(INFILE).o 
+	mv $(INFILE) $(TD)
+	rm -f $(SD)/*.o
+	rm -f $(SD)/*.lis
+	rm -f $(SD)/$(INFILE).c
+
+$(SD)/$(INFILE).o: $(SD)/$(INFILE).pc 
+	proc ${PCCFLAGS} iname=$(INFILE).pc oname=$(SD)/$(INFILE).c
+	cc_r $(CFLAGS) $(INC) -c $(SD)/$(INFILE).c
+
+.DEFAULT:
+	@echo "No hay objetivos que cumplir con $<"
+	@exit 1
+

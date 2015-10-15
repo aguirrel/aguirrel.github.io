@@ -1,0 +1,216 @@
+#
+#Definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+ALLINC = -I./ -I$(IFILES) -I$(MFILES) -I$(DFILES) -I$(VFILES)
+CCC=g++
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC)  -g
+
+LIBSCRED= -L$(LFILES) -levents -lmsgs -ldatabase -L${ORACLE_HOME}/lib32 -lcore9 -lclntsh -lclient9 -lgeneric9 -lcommon9 -lsql9 -lpthread
+
+.SUFFIXES: .C .o
+
+
+.C.o:
+	$(CCC) $(CCCFLG) -o $(OFILES)$*.o -c $< 
+
+ALLFILES= cacstatus CierreLote Daemon RecvMsg SendMsg SendOff \
+	SendOffMsg SendPing SendRev SendRevMigracion SendSD SSend TimeOutDaemon TCPDaemon \
+	X25Daemon CierreLoteCASuc PostCierreCASuc CACStatus IniX25 CfgX25 errcvc
+
+
+all: $(ALLFILES)
+
+
+clean:
+	rm -f $(OFILES)*.o $(LFILES)*.a
+	cd $(EFILES) ; rm $(ALLFILES)
+
+
+SRX25: SRX25.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+		$(OFILES)SRX25.o \
+		-o $(EFILES)SRX25
+
+
+
+IniX25: Config.o Log.o IniX25.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)IniX25 $(OFILES)IniX25.o $(OFILES)Sockets.o\
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+		$(LIBSCRED)
+
+CfgX25: Config.o Log.o CfgX25.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)CfgX25 $(OFILES)CfgX25.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+		$(LIBSCRED)
+
+CACStatus: Config.o Log.o CACStatus.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)CACStatus $(OFILES)CACStatus.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+		$(LIBSCRED)
+
+CierreLoteCA: CierreLoteCA.o Config.o Log.o PidTable.o CACStat.o \
+              Queues.o Semaphores.o 
+	$(CCC) $(CCCFLG) \
+		$(OFILES)CierreLoteCA.o	$(OFILES)Config.o \
+		$(OFILES)Log.o		$(OFILES)PidTable.o \
+		$(OFILES)CACStat.o	$(OFILES)Queues.o \
+		$(OFILES)Semaphores.o \
+		-o $(EFILES)CierreLoteCA \
+		$(LIBSCRED)
+
+
+CierreLoteCASuc: CierreLoteCASuc.o Config.o Log.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)CierreLoteCASuc $(OFILES)CierreLoteCASuc.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+
+PostCierreCASuc: PostCierreCASuc.o Config.o Log.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)PostCierreCASuc  $(OFILES)PostCierreCASuc.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+
+Daemon: Daemon.o Config.o \
+		Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+		TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) -DDAEMON -o $(OFILES)Daemon.o -c Daemon.C
+	$(CCC) $(CCCFLG) \
+                -o $(EFILES)Daemon \
+		$(OFILES)Config.o	$(OFILES)Daemon.o \
+		$(OFILES)EventQueue.o	$(OFILES)Log.o \
+		$(OFILES)TraceNmbr.o	$(OFILES)PidTable.o \
+		$(OFILES)Queues.o	$(OFILES)Semaphores.o \
+		$(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+		$(OFILES)CACStat.o	$(OFILES)Pos.o \
+		$(LIBSCRED)
+
+
+SendRev: Config.o Log.o SendRev.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)SendRev $(OFILES)SendRev.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+
+SendRevMigracion: Config.o Log.o SendRevMigracion.o Sockets.o Queues.o PidTable.o Semaphores.o CACStat.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+		Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+		TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+		-o $(EFILES)SendRevMigracion $(OFILES)SendRevMigracion.o \
+		$(OFILES)Config.o       $(OFILES)Daemon.o \
+		$(OFILES)EventQueue.o   $(OFILES)Log.o \
+		$(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+		$(OFILES)Queues.o       $(OFILES)Semaphores.o \
+		$(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+		$(OFILES)CACStat.o      $(OFILES)Pos.o \
+
+SendPing: Config.o Log.o SendPing.o Sockets.o Queues.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)SendPing $(OFILES)SendPing.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+
+SendAnul: SendAnul.o $(LFILES)libdatabase.a PidTable.o Semaphores.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)SendAnul $(OFILES)SendAnul.o \
+                $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+
+AnulDaemon: AnulDaemon.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+		$(OFILES)Config.o \
+		$(OFILES)AnulDaemon.o     \
+		-o $(EFILES)AnulDaemon
+
+TimeOutDaemon: TimeOutQueue.o TimeOutDaemon.o
+	$(CCC) $(CCCFLG) \
+		$(OFILES)Config.o	$(OFILES)Log.o \
+		$(OFILES)PidTable.o	$(OFILES)Queues.o \
+		$(OFILES)Semaphores.o	$(OFILES)TimeOutQueue.o \
+		$(OFILES)TimeOutDaemon.o \
+		$(OFILES)Events.o \
+		-o $(EFILES)TimeOutDaemon
+
+TCPDaemon: Sockets.o Config.o Log.o PidTable.o Queues.o Semaphores.o  \
+           TCPDaemon.o QChild.o
+	$(CCC) $(CCCFLG) \
+		$(OFILES)Config.o 	$(OFILES)Log.o \
+		$(OFILES)PidTable.o	$(OFILES)Queues.o \
+		$(OFILES)Semaphores.o	$(OFILES)Sockets.o \
+		$(OFILES)TCPDaemon.o	$(OFILES)QChild.o \
+		$(OFILES)Events.o \
+		-o $(EFILES)TCPDaemon
+
+X25Daemon: X25Daemon.o  LinkCVC.o LinkTCP.o LinkX25.o Sockets.o \
+		    Status.o  Daemon.o Config.o \
+                Log.o TraceNmbr.o PidTable.o Queues.o Semaphores.o \
+                TimeOutQueue.o TrxHeap.o CACStat.o Pos.o EventQueue.o
+	$(CCC) $(CCCFLG) $(LIBSCRED) \
+                -o $(EFILES)X25Daemon $(OFILES)X25Daemon.o \
+		    $(OFILES)LinkCVC.o      $(OFILES)LinkTCP.o \
+		    $(OFILES)LinkX25.o      $(OFILES)Sockets.o \
+		    $(OFILES)Config.o       $(OFILES)Daemon.o \
+                $(OFILES)EventQueue.o   $(OFILES)Log.o \
+                $(OFILES)TraceNmbr.o    $(OFILES)PidTable.o \
+                $(OFILES)Queues.o       $(OFILES)Semaphores.o \
+                $(OFILES)TimeOutQueue.o $(OFILES)TrxHeap.o \
+                $(OFILES)CACStat.o      $(OFILES)Pos.o \
+                $(OFILES)Status.o  -lx25s
+
+errcvc: errcvc.o 
+	$(CCC) -o $(EFILES)errcvc $(OFILES)errcvc.o

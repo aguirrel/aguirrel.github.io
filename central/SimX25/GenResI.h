@@ -1,0 +1,11 @@
+int GenRes(char*);
+int GenRtaVta(Iso_Msg*, char*, int*);
+int GenRtaDev(Iso_Msg*, char*, int*);
+int GenRtaVtaLoc(Iso_Msg*, char*, int*);
+int GenRtaDevLoc(Iso_Msg*, char*, int*);
+int GenRtaEchTst(Iso_Msg*, char*, int*);
+int GenRtaBatUpl(Iso_Msg*, char*, int*);
+int GenRtaCie(Iso_Msg*, char*, int*);
+int GenRtaRevVen(Iso_Msg*, char*, int*);
+int GenRtaRevDev(Iso_Msg*, char*, int*);
+int GenSem();

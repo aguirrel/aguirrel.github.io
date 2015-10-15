@@ -1,0 +1,189 @@
+/************************************************************************/
+/*									*/
+/* termupd.pc	    : Funcion para actualizar el codigo de              */
+/*		      estado de las transacciones de una terminal       */
+/*                    de la tabla de credito cred_trx.                  */
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 30/10/97						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+ 
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+extern int	SqlErrno;
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+     
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR	nro_caj_ca[8];
+    VARCHAR	nro_ca[2];
+    VARCHAR	nro_caj[5];
+EXEC SQL END DECLARE SECTION;
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+	  SqlErrno=sqlca.sqlcode;
+	  return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "case");
+    strcpy(login_data.passwd, "olah");
+    open_db(&login_data);
+}
+
+
+void main (int argc, char *argv[])
+{
+FILE	*fd;
+int     cont;
+
+     fd=fopen("/online/log/termupd.log", "a");
+     fprintf(fd, "termupd: Comienza proceso de actualizacion\n"); 
+
+     init();
+
+     if (argc<2)
+     {
+        printf("Uso termupd: <nro_caj_ca>\n");
+        fprintf(fd, "termupd: mal argumentos: [%s]\n", argv[1]); 
+        exit(0);
+     }
+
+     strcpy((char *)nro_caj_ca.arr, argv[1]);
+     nro_caj_ca.len=strlen(argv[1]);
+     printf("nro_caj_ca: [%s]\n", nro_caj_ca.arr);
+
+     printf("termupd: select en cred_term con: [%s]\n", nro_caj_ca.arr); 
+     fprintf(fd, "termupd: select en cred_term con: [%s]\n", nro_caj_ca.arr); 
+
+     EXEC SQL
+         SELECT nro_caj, nro_ca
+         INTO :nro_caj, :nro_ca
+         FROM cred_term
+         WHERE nro_caj_ca=:nro_caj_ca;
+
+     printf("termupd: luego del select sqlcode: %ld\n", sqlca.sqlcode);
+     fprintf(fd, "termupd: luego del select sqlcode: %ld\n", sqlca.sqlcode);
+
+     if (sqlca.sqlcode==0)
+     {
+
+         fprintf(fd, "termupd: actualizo con codigo 50\n");
+
+         EXEC SQL 
+             SELECT COUNT(*)
+             INTO :cont
+             FROM cred_trx
+             WHERE nro_caj=:nro_caj AND
+                   cod_est='00';
+        
+         fprintf(fd, "termupd: voy a actualizar %ld transacciones\n", 
+                     cont);
+ 
+         EXEC SQL
+             UPDATE cred_trx
+             SET cod_est='50'
+             WHERE nro_caj=:nro_caj AND
+                   cod_est='00';
+
+         printf("termupd: luego de actualizar %ld\n", sqlca.sqlcode);
+         fprintf(fd, "termupd: luego de actualizar %ld\n", sqlca.sqlcode);
+
+         EXEC SQL
+             COMMIT;
+
+
+         fprintf(fd, "termupd: actualizo con codigo 51\n");
+
+         EXEC SQL 
+             SELECT COUNT(*)
+             INTO :cont
+             FROM cred_trx
+             WHERE nro_caj=:nro_caj AND
+                   cod_est='01';
+        
+         fprintf(fd, "termupd: voy a actualizar %ld transacciones\n", 
+                     cont);
+ 
+         EXEC SQL
+             UPDATE cred_trx
+             SET cod_est='51'
+             WHERE nro_caj=:nro_caj AND
+                   cod_est='01';
+
+         printf("termupd: luego de actualizar %ld\n", sqlca.sqlcode);
+         fprintf(fd, "termupd: luego de actualizar %ld\n", sqlca.sqlcode);
+
+         EXEC SQL
+             COMMIT;
+
+
+         fprintf(fd, "termupd: actualizo con codigo 56\n");
+
+         EXEC SQL 
+             SELECT COUNT(*)
+             INTO :cont
+             FROM cred_trx
+             WHERE nro_caj=:nro_caj AND
+                   cod_est='06';
+        
+         fprintf(fd, "termupd: voy a actualizar %ld transacciones\n", 
+                     cont);
+ 
+         EXEC SQL
+             UPDATE cred_trx
+             SET cod_est='56'
+             WHERE nro_caj=:nro_caj AND
+                   cod_est='06';
+
+         printf("termupd: luego de actualizar %ld\n", sqlca.sqlcode);
+         fprintf(fd, "termupd: luego de actualizar %ld\n", sqlca.sqlcode);
+
+         EXEC SQL
+             COMMIT;
+
+      }
+      fclose(fd);  
+}

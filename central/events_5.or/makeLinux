@@ -1,0 +1,113 @@
+CCC=g++
+
+#Definicion  del directorio donde realiza las busquedas de las dependencias
+# Ver manual mak.
+
+ALLINC=-I./ -I$(IFILES) -I$(MFILES) -I$(DFILES)
+
+CCCFLG= -DOS_$(OSTYPE) -w $(ALLINC) -g 
+
+EINCS = $(MFILES)8583.h $(IFILES)CACStat.h $(IFILES)Config.h  \
+        $(IFILES)Daemons.h $(IFILES)Log.h $(IFILES)PidTable.h \
+        $(IFILES)Queues.h  \
+        $(DFILES)Table.h $(IFILES)TimeOutQueue.h $(IFILES)TraceNmbr.h \
+        $(IFILES)TrxHeap.h Batch.h BatchRta.h \
+        Cierre.h CierreRta.h EchoTest.h EchoTestRta.h \
+        PriceOffLine.h PriceOn.h PriceOnRta.h RevTrx.h RevTrxRta.h \
+        ShutDown.h TimeOut.h TOCierre.h TOCierreB.h TOBatch.h \
+        TOEchoTest.h TORevTrx.h PriceRev.h 
+
+all: $(LFILES2)libevents.a 
+
+$(OFILES)RtaRevAnul.o: RtaRevAnul.C
+	$(CCC) $(CCCFLG) -o $@ -c RtaRevAnul.C 
+
+$(OFILES)Batch.o: $(EINCS) Batch.C 
+	$(CCC) $(CCCFLG) -o $@ -c Batch.C 
+
+$(OFILES)BatchRta.o: $(EINCS) BatchRta.C
+	$(CCC) $(CCCFLG) -o $@ -c BatchRta.C 
+
+$(OFILES)Cierre.o: $(EINCS) Cierre.C
+	$(CCC) $(CCCFLG) -o $@ -c Cierre.C 
+
+$(OFILES)CierreRta.o: $(EINCS) CierreRta.C
+	$(CCC) $(CCCFLG) -o $@ -c CierreRta.C 
+
+$(OFILES)EchoTest.o: $(EINCS) EchoTest.C
+	$(CCC) $(CCCFLG) -o $@ -c EchoTest.C 
+
+$(OFILES)EchoTestRta.o: $(EINCS) EchoTestRta.C
+	$(CCC) $(CCCFLG) -o $@ -c EchoTestRta.C 
+
+$(OFILES)Events.o: $(EINCS) Events.C
+	$(CCC) $(CCCFLG) -o $@ -c Events.C 
+
+$(OFILES)PriceOffLine.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c PriceOffLine.C 
+
+$(OFILES)PriceOn.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c PriceOn.C 
+
+$(OFILES)PriceOnRta.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c PriceOnRta.C 
+
+$(OFILES)PriceRev.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c PriceRev.C 
+
+$(OFILES)RevTrx.o: $(EINCS) TrxOff.h $(DFILES)DBTrxOff.h
+	$(CCC) $(CCCFLG) -o $@ -c RevTrx.C 
+
+$(OFILES)RevTrxRta.o: $(EINCS)  
+	$(CCC) $(CCCFLG) -o $@ -c RevTrxRta.C 
+
+$(OFILES)RtaTrxOff.o: $(EINCS)  RtaTrxOff.h TrxOff.h $(DFILES)DBTrxOff.h
+	$(CCC) $(CCCFLG) -o $@ -c RtaTrxOff.C
+
+$(OFILES)ShutDown.o: $(EINCS)  
+	$(CCC) $(CCCFLG) -o $@ -c ShutDown.C
+
+$(OFILES)TOBatch.o:  $(EINCS)
+	$(CCC) $(CCCFLG) -o $@ -c TOBatch.C
+
+$(OFILES)TOCierre.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c TOCierre.C 
+
+$(OFILES)TOCierreB.o: $(EINCS)  
+	$(CCC) $(CCCFLG) -o $@ -c TOCierreB.C 
+
+$(OFILES)TOEchoTest.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c TOEchoTest.C
+
+$(OFILES)TORevTrx.o: $(EINCS) 
+	$(CCC) $(CCCFLG) -o $@ -c TORevTrx.C 
+
+$(OFILES)TimeOut.o: $(EINCS)  
+	$(CCC) $(CCCFLG) -o $@ -c TimeOut.C  
+
+$(OFILES)TmtTrxOff.o: $(EINCS)  TmtTrxOff.h TrxOff.h $(DFILES)DBTrxOff.h
+	$(CCC) $(CCCFLG) -o $@ -c TmtTrxOff.C
+
+$(OFILES)TrxOff.o: $(EINCS)  TrxOff.h TrxOff.h $(DFILES)DBTrxOff.h
+	$(CCC) $(CCCFLG) -o $@ -c TrxOff.C 
+
+$(OFILES)RtaTrxAnul.o: 
+	$(CCC) $(CCCFLG) -o $@ -c RtaTrxAnul.C 
+
+$(LFILES2)libevents.a:$(OFILES)RtaRevAnul.o \
+                      $(OFILES)RtaTrxAnul.o \
+                      $(OFILES)BatchRta.o $(OFILES)Cierre.o \
+                      $(OFILES)CierreRta.o $(OFILES)EchoTest.o  \
+                      $(OFILES)EchoTestRta.o $(OFILES)Events.o \
+                      $(OFILES)PriceOffLine.o  \
+                      $(OFILES)PriceOn.o $(OFILES)PriceOnRta.o \
+                      $(OFILES)TimeOut.o $(OFILES)TOCierre.o  \
+                      $(OFILES)TOCierreB.o $(OFILES)TOBatch.o \
+                      $(OFILES)TOEchoTest.o $(OFILES)TORevTrx.o \
+                      $(OFILES)ShutDown.o $(OFILES)TrxOff.o \
+                      $(OFILES)RevTrx.o $(OFILES)RevTrxRta.o  \
+                      $(OFILES)RtaTrxOff.o $(OFILES)TmtTrxOff.o \
+                      $(OFILES)Batch.o $(OFILES)PriceRev.o 
+	ar r $(LFILES)libevents.a $?
+
+

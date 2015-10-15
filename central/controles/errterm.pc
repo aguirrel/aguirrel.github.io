@@ -1,0 +1,267 @@
+#ifdef OS_Linux
+#pragma pack(1)
+#endif
+
+/*
++------------------------------------------------------------------------------+
+|                   Copyright (C) 2003 - COTO CICSA                            |
++-----------------+------------------------------------------------------------+
+| F. Fuente       | errterm.pc                                                 |
+|                 |                                                            |
++-----------------+------------------------------------------------------------+
+| Descripcion     | Proceso para determinar si una terminal de credito esta    |
+|                 | correctamente configurada y saber donde falla si no        |
++-----------------+------------------------------------------------------------+
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define varcpy(X,Y)    	{ strncpy(X.arr,Y , sizeof(X.arr));  \
+                          X.len=(sizeof(X.arr) < strlen(Y) ? \
+                          sizeof(X.arr) : strlen(Y)); }
+#define varcpy2(X,Y)    { strncpy(X, Y.arr, Y.len);\
+                          X[Y.len]=0; }
+
+typedef struct
+{
+    char	cod_tar    [2+1];
+    char	nro_suc    [3+1];
+    char	nro_caj    [5+1];
+    char	nro_ca     [2+1];
+    char	cod_ca     [25+1];
+    char	nro_com    [15+1];
+    char	nro_com_et [15+1];
+	char	nro_com_cie[15+1];
+    char	cod_red    [3+1];
+    char	nro_caj_ca [8+1];
+    char	nro_lot    [3+1];
+	char	nro_trc    [6+1];
+    char	tip_cie    [5+1];
+    char    plan_iso   [1+1];
+    char    plan_sf    [2+1];
+    char    nro_cuo    [3+1];
+    char    nro_caj_sf [5+1];
+    char    cod_con_cie[1+1];
+    char	cod_mon	   [3+1];
+    char	tip_aut    [3];
+	char	cod_con_com_cie[1+1];
+} str_sel_cadata;
+
+/* Variables Oracle */
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	cod_mon    [ 3];
+    VARCHAR	nro_suc    [ 3];
+    VARCHAR	nro_caj    [ 5];
+    VARCHAR	nro_ca     [ 2];
+    VARCHAR	cod_ca     [25];
+    VARCHAR	nro_caj_ca [ 8];
+    VARCHAR	nro_lot    [ 3];
+    VARCHAR	nro_trc    [ 6];
+    VARCHAR	cod_tar    [ 2];
+    VARCHAR	nro_com    [15];
+    VARCHAR	nro_com_cie[15];
+    VARCHAR	nro_com_et [15];
+    VARCHAR	cod_red    [ 3];
+    VARCHAR nro_caj_sf [ 5];
+    VARCHAR cod_con_cie[ 1];
+    VARCHAR plan_iso   [ 1];
+    VARCHAR plan_sf    [ 2];
+    VARCHAR	cod_con_com_cie[1];
+    VARCHAR	tip_aut[2];
+    VARCHAR usr[16];
+EXEC SQL END   DECLARE SECTION;
+
+EXEC SQL INCLUDE SQLCA;
+
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | getDataByNT                                                |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion utilizada por el sistema de credito para saber si  |
+|                 | una terminal esta correctamente configurada                | 
++-----------------+------------------------------------------------------------+
+*/
+int getDataByNT(str_sel_cadata *data)
+{
+    varcpy(cod_tar, data->cod_tar);
+    varcpy(nro_suc, data->nro_suc);
+    varcpy(nro_caj, data->nro_caj);
+    varcpy(plan_sf, data->plan_sf);
+
+    EXEC SQL
+    	SELECT nro_ca 
+        INTO :nro_ca 
+		FROM cred_tarj 
+        WHERE cod_tar=:cod_tar;
+
+    if (sqlca.sqlcode!=0)
+    {
+    	printf("Error en CRED_TARJ [%d]\n   COD_TAR=%s\n\n",
+						sqlca.sqlcode, cod_tar.arr);
+		return sqlca.sqlcode;
+    }
+
+    EXEC SQL
+		SELECT plan_iso,cod_con_cie,cod_con_cie_com,cod_mon,tip_aut
+        INTO :plan_iso,:cod_con_cie,:cod_con_com_cie,:cod_mon,:tip_aut 
+        FROM cred_plan 
+        WHERE cod_tar=:cod_tar 
+	      AND plan_sf=:plan_sf;
+
+    if (sqlca.sqlcode!=0)
+    {
+    	printf("Error en CRED_PLAN [%d]\n   COD_TAR=%s AND PLAN_SF=%s\n\n", 
+						sqlca.sqlcode, cod_tar.arr, plan_sf.arr);
+		return sqlca.sqlcode;
+    }
+
+    EXEC SQL
+    	SELECT nro_caj_ca, nro_lot, nro_caj_sf, nro_trc
+        INTO :nro_caj_ca, :nro_lot, :nro_caj_sf, :nro_trc
+        FROM cred_term
+		WHERE nro_suc=:nro_suc 
+		  AND nro_caj=:nro_caj 
+		  AND nro_ca=:nro_ca
+          AND cod_con_cie=:cod_con_cie;
+
+	if (sqlca.sqlcode!=0)
+    {
+    	printf("Error en CRED_TERM [%d]\n   NRO_SUC=%s AND NRO_CAJ=%s AND NRO_CA=%s AND COD_CON_CIE=%s\n\n", 
+						sqlca.sqlcode, nro_suc.arr, nro_caj.arr, nro_ca.arr, cod_con_cie.arr);
+		return sqlca.sqlcode;
+    }
+    
+    EXEC SQL 
+        SELECT nro_com 
+        INTO :nro_com 
+        FROM cred_com
+        WHERE cod_tar=:cod_tar 
+		  AND nro_caj_sf=:nro_caj_sf 
+		  AND cod_con_com_cie=:cod_con_com_cie 
+		  AND nro_suc=:nro_suc;
+
+    if (sqlca.sqlcode!=0)
+    {
+		printf("Error en CRED_COM [%d]\n   COD_TAR=%s AND NRO_CAJ_SF=%s AND COD_CON_COM_CIE=%s AND NRO_SUC=%s \n\n", 
+						sqlca.sqlcode, cod_tar.arr, nro_caj_sf.arr, cod_con_com_cie.arr, nro_suc.arr);
+		return sqlca.sqlcode;
+    }
+    
+    EXEC SQL
+		SELECT Cod_Ca, Cod_Red 
+        INTO :cod_ca, :cod_red 
+        FROM cred_cas 
+        WHERE Nro_CA=:nro_ca;
+
+    if (sqlca.sqlcode!=0)
+    {
+    	printf("Error en CRED_CAS [%d]\n   NRO_CA=%s\n\n", sqlca.sqlcode, nro_ca.arr);
+		return sqlca.sqlcode;
+    }
+
+    EXEC SQL
+		SELECT Nro_Com_Cie
+		INTO :nro_com_cie
+		FROM Cred_Com_Cie 
+		WHERE Nro_Ca=:nro_ca 
+		  AND Nro_Caj_Sf=:nro_caj_sf
+		  AND Cod_Con_Cie=:cod_con_cie
+		  AND nro_suc = :nro_suc;
+
+    if (sqlca.sqlcode!=0)
+    {
+    	printf("Error en CRED_COM_CIE [%d]\n   NRO_CA=%s AND NRO_CAJ_SF=%s AND COD_CON_CIE=%s AND NRO_SUC=%s \n\n", 
+						sqlca.sqlcode, nro_ca.arr, nro_caj_sf.arr, cod_con_cie.arr, nro_suc.arr);
+		return sqlca.sqlcode;
+    }
+
+    varcpy2(data->cod_mon		 , cod_mon    );
+    varcpy2(data->nro_ca		 , nro_ca     );
+    varcpy2(data->cod_ca		 , cod_ca     );
+    varcpy2(data->nro_com		 , nro_com    );
+    varcpy2(data->nro_com_cie	 , nro_com_cie);
+    varcpy2(data->cod_con_cie	 , cod_con_cie);
+    varcpy2(data->cod_red		 , cod_red    );
+    varcpy2(data->nro_caj_ca	 , nro_caj_ca );
+    varcpy2(data->nro_lot		 , nro_lot    );
+    varcpy2(data->nro_trc		 , nro_trc    );
+    varcpy2(data->plan_iso		 , plan_iso   );
+    varcpy2(data->tip_aut		 , tip_aut    );
+	varcpy2(data->nro_caj_sf	 , nro_caj_sf ); 
+	varcpy2(data->cod_con_com_cie, cod_con_com_cie);
+	printf("CONFIGURACION CORRECTA\n\n");
+    return 0;
+}
+/*
++-----------------+------------------------------------------------------------+
+| FUNCION         | main                                                       |
++-----------------+------------------------------------------------------------+
+| DESCRIPCION     | Funcion principal de la aplicacion                         |
+|                 |                                                            | 
++-----------------+------------------------------------------------------------+
+*/
+int main ( int argc, char *argv[] )
+{
+	int  iRet = -1;
+	char szEmpresa[32];
+	char szTerminal[32];
+	char szTarjeta[32];
+	char szPlanSF[32];
+	str_sel_cadata data;
+
+	printf("\nEMPRESA: ........... ");
+	gets(szEmpresa);
+	printf("TERMINAL: .......... ");
+	gets(szTerminal);
+	printf("TARJETA: ........... ");
+	gets(szTarjeta);
+	printf("PLAN SF: ........... ");
+	gets(szPlanSF);
+	printf("\n");
+
+	if ( (strlen(szEmpresa)>3) || (strlen(szTerminal)>5) ||
+	     (strlen(szTarjeta)>2) || (strlen(szPlanSF)>2) )
+	{
+		printf("ERROR EN PARAMETROS\n\n");
+	}
+	else
+	{
+		varcpy(usr, "/");
+
+		EXEC SQL
+			CONNECT :usr;
+
+		if (sqlca.sqlcode==0)
+		{
+			memset(&data, 0, sizeof(data));
+			sprintf(data.cod_tar, "%02d", atoi(szTarjeta));
+			sprintf(data.nro_suc, "%03d", atoi(szEmpresa));
+			sprintf(data.nro_caj, "%05d", atoi(szTerminal));
+			sprintf(data.plan_sf, "%02d", atoi(szPlanSF));
+			iRet = getDataByNT(&data);
+			if (iRet==0)
+			{
+				printf("NRO_CA: ............ [%s]\n", data.nro_ca);
+				printf("NRO_CAJ_SF: ........ [%s]\n", data.nro_caj_sf);
+				printf("NRO_CAJ_CA: ........ [%s]\n", data.nro_caj_ca);
+				printf("COD_CON_COM_CIE: ... [%s]\n", data.cod_con_com_cie);
+				printf("NRO_COM: ........... [%s]\n", data.nro_com);
+				printf("COD_CON_CIE: ....... [%s]\n", data.cod_con_cie);
+				printf("NRO_COM_CIE: ....... [%s]\n", data.nro_com_cie);				
+				printf("COD_RED: ........... [%s]\n", data.cod_red);
+				printf("NRO_LOT: ........... [%s]\n", data.nro_lot);
+				printf("NRO_TRC: ........... [%s]\n", data.nro_trc);
+				printf("PLAN_ISO: .......... [%s]\n", data.plan_iso);
+				printf("TIP_AUT: ........... [%s]\n", data.tip_aut);
+				printf("COD_MON: ........... [%s]\n", data.cod_mon);
+				printf("\n");
+			}
+		}
+		else
+		{
+			printf("ERROR DE CONEXION\n\n");
+		}
+	}
+	return (iRet);
+}

@@ -1,0 +1,450 @@
+#include "Includes.h"
+
+#define OK 0
+#define NOOK -1
+
+
+// FUNC X25
+int Open(char * strNua, char * strCommio);
+int Write(char *data, int len);
+int Read(char *data, int * msgLen);
+int Close();
+int chkCircuit(void);
+void setCodUserData(char data[2][11]);
+void SetTimeout(int new_timeout);
+int GetErrno();
+int GetSysErrno();
+
+// FUNC TCP
+int OpenListTCP(int Port);
+int AcceptTCP();
+CloseTCP();
+int RecvTCP(char * strMsg,int longMsg);
+int SendTCP(char * strMsg,int longMsg);
+
+
+struct 	cb_link_name_struct    x25LinkDefs;        // X25 Link Info.
+struct 	ctr_array_struct       x25CtrArray[1];     // X25 Counters.
+struct 	cb_call_struct         x25CallDefs;        // X25 Call Info.
+struct 	cb_msg_struct          x25RcvMsg;          // X25 In Msg Struct
+struct 	cb_clear_struct        x25ClearDefs;       // X25 Hang up info.
+struct 	cb_data_struct         x25Data;            // X25 Send Msg info.
+
+char		CalledAddress[40];												 // X25 Addrs To call.
+char    linkName[40];         		             		 // Nombre del canal.
+
+int			x25ClearCause;
+int			x25DiagnosticCause;
+
+int			time_out;			    												 // Tiempo de timeout.
+int			connId;																		 // Connection ID.
+int			ctrId;                               			 // Counter ID.
+int 		ran;
+
+int			sysLastError;
+
+unsigned long codUserData[2];
+
+static int initDone;
+
+int	  	x25LastError;
+
+struct sockaddr_in stServAddr, stCliAddr;
+
+int   iSockFd, iNewSockFd;
+
+
+int main (int argc, char * argv[])
+{
+	int ret = 0;
+
+	char strMsgInt[1024];
+	char strMsgExt[1024];
+	int  longMsgInt;
+	int  longMsgExt;
+	int  iIndice 	= 0;
+	int	 i				= 0;
+	char	szBitmap[8];
+	FILE	*pFile;
+
+	memset(szBitmap, 0, sizeof(szBitmap));
+	szBitmap[0] = 0x11;
+	szBitmap[1] = 0x00;
+  szBitmap[2] = 0x00;
+  szBitmap[3] = 0x10;
+  szBitmap[4] = 0x00;
+  szBitmap[5] = 0x10;
+  szBitmap[6] = 0x00;
+  szBitmap[7] = 0x00;
+
+	if ( argc < 3 )
+	{
+		printf("Debe ingresar el NUA, el COMMIO y Port de TCP. \n\n");
+		return(1);
+	}
+
+	ret = Open(argv[1],argv[2]);
+	if ( ret == NOOK )
+	{
+		printf("X25: Error Causa (%d) Diagnostico (%d)\n" ,x25ClearCause,x25DiagnosticCause);
+		return(2);
+	}
+
+		memset(strMsgInt,0x00,sizeof(strMsgInt));
+		memset(strMsgExt,0x00,sizeof(strMsgExt));
+
+		//Setear Mensaje
+
+		// strMsgInt
+
+		//  INI X25
+		/*Armado del mensaje de ECHO TEST*/
+		memcpy(strMsgInt, "6000030000", 10);
+		iIndice += 10;
+
+		memcpy(strMsgInt + iIndice, "0800", 4);
+		iIndice += 4;
+
+		memcpy(strMsgInt + iIndice, szBitmap,8); 
+		iIndice += 8;
+
+		memcpy(strMsgInt + iIndice, "990000", 6);
+		iIndice += 6;
+
+		memcpy(strMsgInt + iIndice, "1119120000", 10);	
+		iIndice += 10;
+
+		memcpy(strMsgInt + iIndice, "003", 3);
+		iIndice += 3;
+
+		memcpy(strMsgInt + iIndice, "80000011", 8);
+		iIndice += 8;
+
+		/*Termina de armar el mensaje*/
+
+		if((pFile = fopen("Mensaje.x25", "a")) != NULL)		
+		{
+				for(i=0; i <= iIndice; i++)
+				{
+						fprintf(pFile, "%c", strMsgInt[i]);
+				}/*end if*/
+
+				fclose(pFile);
+		}/*end if*/
+
+		ret = Write(strMsgInt, iIndice);
+		printf("X25: En write [%s] RET[%d]\n",strMsgInt,ret);
+		if (ret==NOOK)
+		{
+			 printf("X25: Error (%d, %d) en Write de mensaje al canal.!!\n", GetErrno(), GetSysErrno());
+	  }
+		ret=Read(strMsgExt, &longMsgExt); 
+		printf("X25: En read [%s] RET[%d]\n",strMsgExt,ret);
+		//  FIN X25
+	
+	Close();
+}
+
+
+
+int Open(char * strNua, char * strCommio) /*NUA , COMMIO*/
+{
+	int rc;                                         // Codigos de retorno
+	struct cb_dev_info_struct *x25DevAttr;          // Info de dispositivo
+	static char myX25Addrs[40];                     // Mi direccion de x.25
+	static char call_user_data[40];
+
+	connId=-1;
+	time_out=75;
+	strcpy(linkName, strCommio);
+
+	codUserData[0] = 0;
+	codUserData[1] = 0;
+
+	x25LinkDefs.flags    =X25FLG_LINK_NAME;
+	x25LinkDefs.link_name=linkName;
+	if (initDone!= 128)
+	{
+    rc=x25_init(&x25LinkDefs);
+
+		if (rc < 0 )
+	  {
+        printf("X25 init fail: x25_errno = %d errno = %d\n",x25_errno,errno);
+        linkName[0]='\0';
+        return NOOK;
+	  }
+	  initDone=128;
+	}
+
+	ran=1;
+
+	if (linkName[0]=='\0')
+  {
+	  printf("Error, linkName='%s'\n", linkName);
+    return NOOK;
+  }
+
+	strcpy(CalledAddress, strNua);
+
+	// X25 Counter  ID
+	ctrId=x25_ctr_get();
+
+	x25DevAttr = x25_device_query(&x25LinkDefs);
+	strcpy(myX25Addrs, x25DevAttr->nua);
+	printf("Nua local: [%s]\n",myX25Addrs);
+	free(x25DevAttr);
+
+	x25CallDefs.flags        = X25FLG_LINK_NAME;      
+	x25CallDefs.link_name    = linkName;
+
+	x25CallDefs.flags       |= X25FLG_CALLING_ADDR;  
+	x25CallDefs.calling_addr = myX25Addrs;
+
+	x25CallDefs.flags       |= X25FLG_CALLED_ADDR;   
+	x25CallDefs.called_addr  = CalledAddress;
+
+	// Debe verificarse que el CA tenga que usar call_user_data y en ese 
+	// caso ponerlo. Mejorar esta solucion en cuanto se disponga de tiempo
+
+
+	// Se ejecuta solo si hay codUserData especificado en credito.ini
+	if (codUserData[0]!=0 || codUserData[1]!=0)
+	{
+      x25CallDefs.flags	|= X25FLG_USER_DATA;
+      x25CallDefs.user_data_len=8;
+      x25CallDefs.user_data = (unsigned char *) codUserData;
+	}
+	connId=x25_call(&x25CallDefs, ctrId);
+	if (connId==-1)
+  {
+  	printf("trying to reach: '%s'\n", CalledAddress);
+    printf("x25_call fail : x25_errno = %d errno = %d\n",x25_errno,errno);
+    x25LastError=x25_errno;
+    return NOOK;
+  }
+
+	x25CtrArray[0].flags     = X25FLG_CTR_ID;
+	x25CtrArray[0].ctr_id    = ctrId;
+
+	x25CtrArray[0].flags    |= X25FLG_CTR_VALUE;
+	x25CtrArray[0].ctr_value = 0;
+
+	x25_ctr_wait(1, x25CtrArray);
+
+	x25_receive(&connId, &x25RcvMsg);    // Recive la confirmacion o clear.
+
+	switch(x25RcvMsg.msg_type)
+  {
+    case X25_CALL_CONNECTED:        //Confirmacion de la conexion.    
+        rc=OK;
+        break;
+
+    case X25_CLEAR_INDICATION:      // Clear Conexion (??)
+        x25ClearCause      = x25RcvMsg.msg_point.cb_clear->cause;
+        x25DiagnosticCause = x25RcvMsg.msg_point.cb_clear->diagnostic;
+        x25_ctr_remove(ctrId);
+        connId=-1;
+        rc=NOOK;
+        break;
+
+    default:
+        connId=-1;
+        x25_ctr_remove(ctrId);
+        rc=NOOK;
+        break;
+  }
+	if (rc < 0)
+  {
+    x25LastError=x25_errno;
+    sysLastError=errno;
+    printf("X25 open fail: "
+           "x25_errno = %d errno = %d\n",x25_errno,errno);
+
+    return rc;
+  }
+	return rc;
+}
+
+
+int Write(char *data, int len)
+{
+	int rc;
+	unsigned int ra=1;
+
+	if (connId == -1)
+  {
+    return NOOK;
+  }
+	x25Data.flags    = X25FLG_DATA;
+	x25Data.data_len    = len;
+	x25Data.data    = (unsigned char*)data;
+
+	rc=x25_send(connId,&x25Data);
+	if (rc==NOOK)
+  	return NOOK;
+	return OK;
+}
+
+
+int Read(char *data, int * msgLen)
+{
+	int        rc=OK;
+	time_t    time1;
+	time_t    time2;
+
+	if (connId == -1)
+  {
+  	x25LastError=260;
+    return NOOK;
+  }
+	rc=x25_ctr_test(x25CtrArray[0].ctr_id);
+	if (rc==NOOK)
+	{
+   x25LastError=x25_errno;
+   return NOOK;
+	}
+	if (rc==0)
+	{
+  // Hace un wait sobre el SVC
+  // ya que no hay mensajes esperando 
+	  rc=x25_ctr_wait(1,x25CtrArray);
+	  if (rc==NOOK)
+	  {
+	    x25LastError=x25_errno;
+	    return NOOK;
+	  }
+	}
+	rc=x25_receive(&connId, &x25RcvMsg);
+	if (rc==NOOK)
+	{
+    x25LastError=x25_errno;
+    return NOOK;
+	}
+
+	switch(x25RcvMsg.msg_type)
+	{
+    case X25_DATA:
+        *msgLen = x25RcvMsg.msg_point.cb_data->data_len;
+        memcpy(data, x25RcvMsg.msg_point.cb_data->data, *msgLen);
+        free(x25RcvMsg.msg_point.cb_data);
+        rc=OK;
+        break;
+
+    case X25_CLEAR_INDICATION:
+        x25LastError=261;
+        x25ClearCause      = x25RcvMsg.msg_point.cb_clear->cause;
+        x25DiagnosticCause = x25RcvMsg.msg_point.cb_clear->diagnostic;
+        x25_ctr_remove(ctrId);
+        connId==-1;
+        rc=NOOK;
+        break;
+
+    case X25_DATA_ACK:
+        *msgLen=0;
+        printf("Se informo un Data Ack ????\n");
+        break;
+
+	}
+	return rc;
+}
+
+int Close()
+{
+	int rc; 
+
+  //  Clear the call now that transmission is completed.
+	x25ClearDefs.flags = X25FLG_CAUSE;
+	x25ClearDefs.flags |= X25FLG_DIAGNOSTIC;
+	x25ClearDefs.cause = 0;            /* The CCITT code for DTE-originated   */
+	x25ClearDefs.diagnostic = 0;       /* No further information              */
+	rc=x25_ctr_remove(x25CtrArray[0].ctr_id);
+	x25_call_clear(connId, &x25ClearDefs, (struct cb_msg_struct *)NULL);
+
+	return OK;
+}
+
+int chkCircuit(void)
+{
+	struct cb_circuit_info_struct * circuitInfo;
+	circuitInfo = x25_circuit_query(connId);
+	if (circuitInfo==NULL)
+  {
+    printf ("Error al obtener estado del canal, %d\n",x25_errno);
+    return NOOK;
+  }
+	free (circuitInfo);
+
+	return OK;
+}
+
+void setCodUserData(char data[2][11])
+{
+    codUserData[0] = strtoul(data[0], '\0', 16);
+    codUserData[1] = strtoul(data[1], '\0', 16);
+}
+
+void SetTimeout(int new_timeout)
+{
+    time_out=new_timeout;
+}
+
+int GetErrno()
+{
+    return x25LastError;
+}
+
+int GetSysErrno()
+{
+    return sysLastError;
+}
+
+
+int OpenListTCP(int Port)
+{
+				if ((iSockFd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        {
+                printf("Error apertura de socket\n");
+                return (iSockFd);
+        }
+
+//        bzero(&stServAddr, sizeof(stServAddr));
+        stServAddr.sin_family      = AF_INET;
+        stServAddr.sin_port        = htons(Port);
+        stServAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+        if (bind(iSockFd, (struct sockaddr *) &stServAddr, sizeof(stServAddr)) < 0)
+        {
+                printf("Error en bind\n");
+                return(-1);
+        }
+				listen(iSockFd, 5);
+				return (0);
+}
+
+int AcceptTCP()
+{
+		int iCliLen;
+
+    iCliLen    = sizeof(stCliAddr);
+    iNewSockFd = accept(iSockFd, (struct sockaddr *) &stCliAddr, (size_t*)(&iCliLen));
+    if (iNewSockFd < 0)
+    {
+          printf("Error en accept %d\n",iNewSockFd);
+    }
+		return (iNewSockFd);
+}
+
+CloseTCP()
+{
+	close(iNewSockFd);
+}
+
+int RecvTCP(char * strMsg,int longMsg)
+{
+	return (recv(iNewSockFd,strMsg,longMsg,0));
+}
+
+int nendTCP(char * strMsg,int longMsg)
+{
+	return (send(iNewSockFd,strMsg,longMsg,0));
+}

@@ -1,0 +1,66 @@
+(ld): halt 4
+(ld): savename /online/bin/EmDaemon
+(ld): filelist 32 2
+(ld): i /usr/lpp/xlC/lib/crt0_r.o
+(ld): i ./xlcwfxFqd.o
+(ld): lib /online/lib//libmsgs.a
+(ld): lib /online/lib//libdatabase.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libcore3.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libc3v6.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libnlsrtl3.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libclient.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libserver.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libgeneric.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libcommon.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libsqlnet.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libncr.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libepc.a
+(ld): lib /home/oracle/app/oracle/product/7.3.3/lib/libsql.a
+(ld): i /online/obj/Config.o
+(ld): i /online/obj/LinkX25.o
+(ld): i /online/obj/Log.o
+(ld): i /online/obj/PidTable.o
+(ld): i /online/obj/Queues.o
+(ld): i /online/obj/Em.o
+(ld): i /online/obj/CACStat.o
+(ld): i /online/obj/Semaphores.o
+(ld): i /online/obj/Status.o
+(ld): lib /usr/lib/libx25s.a
+(ld): lib /usr/lib/libg.a
+(ld): lib /usr/lpp/xlC/lib/libC_r.a
+(ld): lib /usr/lpp/xlC/lib/libC.a
+(ld): lib /usr/lib/libpthreads.a
+(ld): lib /usr/lib/libc_r.a
+(ld): lib /usr/lib/libm.a
+(ld): i /usr/lib/libc.a
+INSERT: Shared object libx25s.a[shr.o]: 33 symbols imported.
+INSERT: Shared object libC_r.a[shr.o]: 390 symbols imported.
+INSERT: Shared object libC.a[shr.o]: 391 symbols imported.
+INSERT: Shared object libpthreads.a[shr.o]: 99 symbols imported.
+INSERT: Shared object libc_r.a[aio.o]: 5 symbols imported.
+INSERT: Shared object libc_r.a[shr.o]: 1598 symbols imported.
+INSERT: Shared object libc_r.a[meth.o]: 2 symbols imported.
+INSERT: Shared object /usr/lib/libc.a[aio.o]: 5 symbols imported.
+INSERT: Shared object /usr/lib/libc.a[shr.o]: 1479 symbols imported.
+INSERT: Shared object /usr/lib/libc.a[meth.o]: 2 symbols imported.
+FILELIST: Number of previously inserted files processed: 32
+(ld): exports /usr/lib/libg.exp 
+EXPORTS: Symbols exported: 4
+(ld): resolve
+RESOLVE: 4607 of 43154 symbols were kept.
+(ld): addgl /usr/lib/glink.o
+ADDGL: Glink code added for 154 symbols.
+(ld): er full
+ER: There are no unresolved symbols.
+(ld): mismatch
+MISMATCH: No type mismatches exist.
+(ld): comprld
+COMPRLD: Kept 25933 of 25935 relocation entries.
+(ld): origin page 0x10000000 0x20000000
+(ld): libpath ./mensajes:/online/lib/:/home/oracle/app/oracle/product/7.3.3/lib:/usr/lib/threads:/usr/lpp/xlC/lib:/usr/lib:/lib
+LIBPATH: Library path set to ./mensajes:/online/lib/:/home/oracle/app/oracle/product/7.3.3/lib:/usr/lib/threads:/usr/lpp/xlC/lib:/usr/lib:/lib
+(ld): save 1L .
+SAVE: Section sizes = 1832455+295513+16018 (0x1BF607+0x48259+0x3E92 hex)
+SAVE: Size of TOC: 4068 (0xFE4 hex)
+(ld): rc
+RC: Highest return code was 0.

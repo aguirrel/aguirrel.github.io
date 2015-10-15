@@ -1,0 +1,26 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define BOOL  unsigned char
+#define TRUE  1
+#define FALSE 0
+
+
+void main (int argc, char *argv[])
+{
+	int i;
+	int nEntrada;
+	time_t Time;
+	int iNumber;	
+	time( &Time );
+	srand(Time);
+	iNumber = rand()%atoi(argv[1]);
+	for( i = 0; i < 20; i++)
+		printf("\nNro: %d", rand()%atoi(argv[1]));
+}
+
+
+
+

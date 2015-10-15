@@ -1,0 +1,405 @@
+/*************************************************************************/
+/*                                                                       */
+/* convert.pc       : Funcion para reinsertar las trx                    */
+/*                                                                       */
+/*                                                                       */
+/* Proyecto         : Autorizacion de tarjetas de credito - StoreFlow.   */
+/* Cliente          : Coto                                               */
+/* Autor            : Andres Manggini                                    */
+/* Fecha            : 06/07/98                                           */
+/* Compilador       : C++                                                */
+/* Base de datos    : Oracle                                             */
+/*                                                                       */
+/*************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+
+
+extern int      SqlErrno;
+
+
+typedef struct
+{
+    char        userid[USERID_LEN+1];
+    char        passwd[PASSWD_LEN+1];
+} str_login;
+
+
+
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR    cuota[1];
+
+    VARCHAR     userid[20];
+    VARCHAR     passwd[20];
+
+    VARCHAR     nro_caj_sf[2];
+    VARCHAR     nro_caj_sf2[5];
+
+    VARCHAR     nro_caj_ca[8];
+
+    VARCHAR     tnro_caj_ca[8];
+    VARCHAR     tnro_lot[3];
+
+    VARCHAR     cnro_com[15];
+
+    VARCHAR     nro_lot[3];
+    VARCHAR     nro_suc[3];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_caj2[5];
+    VARCHAR     nro_caj_ori[5];
+    VARCHAR     nro_trx[4];
+    VARCHAR     mod_env[2];
+    VARCHAR     cod_tar[2];
+    VARCHAR     nro_ca[2];
+    VARCHAR     cod_trx[2];
+
+    VARCHAR     cod_est[2];
+    VARCHAR     can_ret[4];
+    VARCHAR     cod_pro[6];
+    VARCHAR     monto[12];
+    VARCHAR     nro_tar[20];
+    VARCHAR     nro_trc[6];
+    VARCHAR     fec_loc[4];
+    VARCHAR     fec_ven[4];
+    VARCHAR     mod_ing[3];
+    VARCHAR     nro_tic[4];
+
+    VARCHAR     cod_aut[6];
+    VARCHAR     fec_vtacard[4];
+    VARCHAR     nro_com[15];
+    VARCHAR     plan_iso[1];
+    VARCHAR     plan_sf[2];
+    VARCHAR     nro_cuo[3];
+    VARCHAR     cod_mon[3];
+
+
+EXEC SQL END DECLARE SECTION;
+
+
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+        CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+          SqlErrno=sqlca.sqlcode;
+          return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+int init()
+{
+    str_login   login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    return open_db(&login_data);
+}
+
+
+
+void main (int argc, char *argv[])
+{
+  FILE *fd;
+  char szFecha[5];
+  int ret;
+  long lcont;
+  char szFecAuxi[5];
+  char szFecAuxi2[3];
+  long lRegProcess = 0;
+
+  if (argc < 2)
+  {
+    printf("\nUso: %s <MMDD> \n\n", argv[0]);
+    exit(-1);
+  }
+
+  printf("Apertura del archivo convert.log\n\n");
+  if ( (fd=fopen("/online/log/convert.log", "w+")) == NULL )
+  {
+    printf ("\nError: Apertura de archivo convert.log\n");
+    exit(-1);
+  }
+
+  if( NOOK == init() )
+  {
+    printf("Error en 'init()' ");
+    fprintf(fd, "Error en 'init()' ");
+    exit(-1);
+  }
+
+
+  /* Guardo la fecha */
+/*  strcpy(szFecha, argv[1]);  */
+    strcpy( (char*) fec_loc.arr, argv[1]);
+    fec_loc.len = strlen( (char*) fec_loc.arr);
+
+  printf("\nComienza proceso de actualizacion...\n");
+  fprintf(fd, "\nComienza proceso de actualizacion...\n");
+
+   EXEC SQL
+        DECLARE cursor_term CURSOR FOR
+            SELECT substr(nro_caj_sf, 4,2), 
+                   cod_est,
+                   nro_trc,
+                   nro_caj_ori,
+                   nro_caj,
+                   nro_ca,
+                   nro_cuo,
+                   fec_ven,
+                   nro_trx,
+		   nro_lot,
+		   nro_com
+                   FROM cred_trx 
+                   WHERE cod_est = '12'
+                   AND cod_tar='02'
+                   AND substr(fec_loc,1,4) = :fec_loc 
+                   AND nro_cuo = '001'
+                   AND fec_vtacard IS NOT NULL;
+
+/*                 GROUP BY CRED.nro_caj_sf, TRX.nro_ca
+                   ORDER BY CRED.nro_caj_sf, TRX.nro_ca; */
+
+  
+  printf("\nValor devuelto despues del declare cursor : %i\n", sqlca.sqlcode);     
+
+     EXEC SQL
+       OPEN cursor_term;
+
+  printf("\nValor devuelto despues de open : %i\n", sqlca.sqlcode);     
+
+    EXEC SQL
+       FETCH cursor_term
+          INTO :nro_caj_sf, :cod_est, :nro_trc, :nro_caj_ori,
+               :nro_caj2, :nro_ca, :nro_cuo, :fec_ven, :nro_trx, :nro_lot, :nro_com;
+
+  printf("\nValor devuelto despues de FETCH : %i\n", sqlca.sqlcode);     
+
+  while (sqlca.sqlcode == 0 || sqlca.sqlcode == -1405)
+  {
+ 
+    /* Codigo de estado 48 */
+    strcpy( (char*)cod_est.arr, "48");
+    cod_est.len = strlen( (char*) cod_est.arr);
+
+    /* Trace = NULL */
+    strcpy( (char*) nro_trc.arr, "");
+    nro_trc.len = strlen( (char*) nro_trc.arr);
+
+    /* El numero de caja pasa a nro_caj_ori (nro_caj pasa a ser 999 + nro_caj_sf) */
+
+    if ( 0 != strcspn( (char*) nro_caj2.arr, "999") )
+    {
+      strcpy( (char*) nro_caj_ori.arr, (char*) nro_caj2.arr);
+      nro_caj_ori.len = strlen( (char*) nro_caj_ori.arr );
+      printf ("\nro_caj: %s  nro_caj_ori: %s", (char*)nro_caj2.arr, (char*)nro_caj_ori.arr);
+    }
+    else
+    {
+       printf("\n\nValor '999' en nro_caj.arr\n\n");
+       fprintf(fd, "\n\nValor '999' en nro_caj.arr\n\n");
+    }
+
+
+    /* tnro_caj pasa a ser 999 + cnro_caj_sf */
+    strcpy( (char*) nro_caj.arr, "999");
+    strcat( (char*) nro_caj.arr, (char*) nro_caj_sf.arr);
+    nro_caj.len = strlen( (char*) nro_caj.arr );
+
+    /* switcheamos la fecha */
+    strcpy(szFecAuxi, (char*)fec_ven.arr);
+    strncpy(szFecAuxi2, &szFecAuxi[2], 2);
+
+    szFecAuxi[2] = '\0';
+    szFecAuxi2[2] = '\0';
+
+    strcpy( (char*) fec_ven.arr, szFecAuxi2);
+    strcat( (char*) fec_ven.arr, szFecAuxi);
+    fec_ven.len = strlen( (char*) fec_ven.arr );
+
+    
+    
+    if ( strcmp( (char*)nro_cuo.arr, "001" ) == 0 )
+    {
+        printf("\n nro_cuo == '001'. Se le asigno 0 a nro_cuo ");
+        fprintf(fd, "\n nro_cuo == '001'. Se le asigno 0 a nro_cuo ");
+        strcpy( (char*) cuota.arr, "0");
+    }
+    else
+    {
+        printf("\n nro_cuo != '001'. nro_cuo: %s. Se le asigno 1 a nro_cuo.", (char*) nro_cuo.arr);
+        fprintf(fd, "\n nro_cuo != '001'. nro_cuo: %s. Se le asigno 1 a nro_cuo.", (char*) nro_cuo.arr);
+        strcpy( (char*) cuota.arr, "1");
+    }
+   
+    cuota.len = strlen( (char* )cuota.arr );
+       
+
+    EXEC SQL
+         SELECT nro_caj_ca, nro_lot 
+         INTO   :tnro_caj_ca, :tnro_lot
+         FROM   cred_term
+         WHERE  nro_caj=:nro_caj2
+         AND    nro_ca=:nro_ca
+         AND    cod_con_cie= :cuota;
+
+        printf("\nValor -sqlca.sqlcode- devuelto despues del primer select (nro_caj_ca, nro_lot): %i\n", sqlca.sqlcode);     
+        fprintf(fd, "\nValor -sqlca.sqlcode- devuelto despues del primer select (nro_caj_ca, nro_lot): %i\n", sqlca.sqlcode);     
+	printf("\n\nt	nro_caj_ca : %s", (char*) tnro_caj_ca.arr);
+	fprintf(fd, "\n\ntnro_caj_ca : %s", (char*) tnro_caj_ca.arr);
+	printf("\n\ntnro_lot : %s", (char*) tnro_lot.arr);
+	fprintf(fd, "\n\ntnro_lot : %s", (char*) tnro_lot.arr);
+
+    strcpy((char*)nro_caj_sf2.arr, "000");
+    strcat( (char*) nro_caj_sf2.arr, (char*) nro_caj_sf.arr);
+    nro_caj_sf2.len = strlen( (char*) nro_caj_sf2.arr);
+
+    printf("\n	 nro_caj_sf2 : %s", (char*) nro_caj_sf2.arr);
+    printf("\n nro_caj_sf  : %s", (char*) nro_caj_sf.arr);
+    fprintf(fd, "\n nro_caj_sf2 : %s ", (char*) nro_caj_sf2.arr);
+    fprintf(fd, "\n nro_caj_sf  : %s ", (char*) nro_caj_sf.arr);
+
+    EXEC SQL
+         SELECT nro_com 
+         INTO   :cnro_com
+         FROM   cred_com
+         WHERE  nro_caj_sf=:nro_caj_sf2
+         AND    cod_tar='02' 
+         AND    cod_con_com_cie= :cuota;
+
+    printf("\nValor devuelto despues del segundo select (nro_com): %i\n", sqlca.sqlcode);     
+    fprintf(fd, "\nValor devuelto despues del segundo select (nro_com): %i\n", sqlca.sqlcode);     
+    printf("\n\nnro_com : %s", (char*) nro_com.arr);
+    fprintf(fd, "\n\nnro_com : %s", (char*) nro_com.arr);
+    printf("\n\ncnro_com : %s", (char*) cnro_com.arr);
+    fprintf(fd, "\n\ncnro_com : %s", (char*) cnro_com.arr);
+
+    if ( strcmp( (char*) nro_caj_ca.arr, (char*) tnro_caj_ca.arr) != 0 )
+    {
+	   printf("\nEntra a la primer condicion de update");
+	   fprintf(fd, "\nEntra a la primer condicion de update");
+	   printf("\nPrimer update: tnro_caj_ca [%s] tnro_lot [%s]", (char*) tnro_caj_ca.arr, (char*) tnro_lot.arr);
+	   fprintf(fd, "\nPrimer update: tnro_caj_ca [%s] tnro_lot [%s]", (char*) tnro_caj_ca.arr, (char*) tnro_lot.arr);
+
+ 	   EXEC SQL
+	      UPDATE cred_trx
+		 SET nro_caj_ca = :tnro_caj_ca,
+	             nro_lot = :tnro_lot
+/*	         WHERE cod_est = '12'
+	               AND cod_tar='02'
+	               AND nro_trx = :nro_trx
+	               AND nro_caj = :nro_caj2
+	               AND substr(fec_loc,1,4) = :fec_loc 
+                       AND nro_cuo = '001'
+	               AND fec_vtacard IS NOT NULL; */
+
+	         WHERE nro_trx = :nro_trx
+	               AND nro_caj = :nro_caj2
+		       AND cod_est = '12';
+
+	    EXEC SQL
+	       COMMIT;
+    }
+
+    if ( strcmp( (char*) nro_com.arr, (char*) cnro_com.arr) != 0 )
+    {
+	   printf("\nEntra a la segunda condicion de update!!");
+	   fprintf(fd, "\nEntra a la segunda condicion de update!!");
+ 	   EXEC SQL
+	      UPDATE cred_trx
+		 SET nro_com = :cnro_com
+		 WHERE nro_trx = :nro_trx;
+
+/*	         WHERE cod_est = '12'
+	               AND cod_tar='02'
+	               AND nro_trx = :nro_trx
+	               AND nro_caj = :nro_caj2
+	               AND substr(fec_loc,1,4) = :fec_loc 
+                       AND nro_cuo = '001'
+	               AND fec_vtacard IS NOT NULL; */
+	    EXEC SQL
+	       COMMIT;
+    }
+
+    EXEC SQL
+	  UPDATE cred_trx
+	  SET cod_est = :cod_est,
+	      nro_trc = :nro_trc,
+	      nro_caj_ori = :nro_caj_ori,
+	      nro_caj = :nro_caj,
+	      fec_ven = :fec_ven
+          WHERE cod_est = '12'
+	  AND   cod_tar='02'
+	  AND   nro_trx = :nro_trx
+	  AND   nro_caj = :nro_caj2
+	  AND   substr(fec_loc,1,4) = :fec_loc 
+          AND   nro_cuo = '001'
+	  AND   fec_vtacard IS NOT NULL;
+     
+    printf("\nValor devuelto despues de UPDATE: %i\n", sqlca.sqlcode);     
+    fprintf(fd, "\nValor devuelto despues de UPDATE: %i\n", sqlca.sqlcode);     
+
+    printf("\nFecha (fec_loc)                 : %s", fec_loc.arr);
+    printf("\nCodigo de estado (cod_est)      : %s", cod_est.arr);
+    printf("\nNumero de trx  (nro_trx)        : %s", (char*)nro_trx.arr);
+    printf("\nNumero de trace  (nro_trc)      : %s", nro_trc.arr);
+    printf("\nNumero CajOri (nro_caj_ori)     : %s", nro_caj_ori.arr);
+    printf("\nNumero de caja nueva (nro_caj)  : %s", nro_caj.arr);
+    printf("\nNumero de caja recup. (nro_caj2): %s", nro_caj2.arr);
+    printf("\nFecha vencimiento (fec_ven)     : %s", fec_ven.arr);
+
+    fprintf(fd, "\nFecha (fec_loc)                 : %s", fec_loc.arr);
+    fprintf(fd, "\nCodigo de estado (cod_est)      : %s", cod_est.arr);
+    fprintf(fd, "\nNumero de trx  (nro_trx)        : %s", (char*) nro_trx.arr);
+    fprintf(fd, "\nNumero de trace  (nro_trc)      : %s", nro_trc.arr);
+    fprintf(fd, "\nNumero CajOri (nro_caj_ori)     : %s", nro_caj_ori.arr);
+    fprintf(fd, "\nNumero de caja nueva (nro_caj)  : %s", nro_caj.arr);
+    fprintf(fd, "\nNumero de caja recup. (nro_caj2): %s", nro_caj2.arr);
+    fprintf(fd, "\nFecha vencimiento (fec_ven)     : %s", fec_ven.arr);
+
+    EXEC SQL
+       COMMIT;
+
+    EXEC SQL
+       FETCH cursor_term
+          INTO :nro_caj_sf, :cod_est, :nro_trc, :nro_caj_ori,
+               :nro_caj2, :nro_ca, :nro_cuo, :fec_ven, :nro_trx, :nro_lot, :nro_com;
+
+    lRegProcess++;
+  }
+
+  EXEC SQL
+      CLOSE cursor_term;
+
+  printf("\n\nRegistros procesados: %6d\n", lRegProcess);
+  fprintf(fd, "\n\nRegistros procesados: %6d\n", lRegProcess);
+
+  printf("\nSaliendo del programa...\n");
+  fprintf(fd, "\nSaliendo del programa...\n");
+  fclose(fd);
+}
+	

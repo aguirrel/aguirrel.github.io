@@ -1,0 +1,480 @@
+/************************************************************************/
+/*									*/
+/* checker.pc	    : Funcion para controlar tabla cred_trx		*/
+/*		      contra la tabla de credito de sucursal.     	*/
+/*									*/
+/* Proyecto	    : Autorizacion de tarjetas de credito - StoreFlow.	*/
+/* Cliente	    : Coto						*/
+/* Autor	    : Rolando Loustric					*/
+/* Fecha	    : 26/08/96						*/
+/* Compilador	    : C++						*/
+/* Base de datos    : Oracle						*/
+/*									*/
+/************************************************************************/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+ 
+#ifndef OK
+  #define OK    0
+  #define NOOK  -1
+#endif
+
+#define USERID_LEN   20
+#define PASSWD_LEN   20
+#define MAX_LONG_TARJ	20
+
+extern int	SqlErrno;
+
+struct trx 
+{
+char nro_caj[6];
+char nro_trx[5];
+char cod_tar[3];
+char nro_tar[21];
+char cod_aut[9];
+char monto[15];
+char fecha[7];
+char hora[5];
+char cuotas[4];
+char plan[3];
+char sitsend[3];
+};
+
+struct trx TrxRead;
+
+typedef struct
+{
+    char	userid[USERID_LEN+1];
+    char	passwd[PASSWD_LEN+1];
+} str_login;
+     
+FILE *fsal;
+
+EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR	userid[20];
+    VARCHAR	passwd[20];
+    VARCHAR     nro_tar[20];
+    VARCHAR     cod_aut[6];
+    VARCHAR     nro_caj[5];
+    VARCHAR     nro_trx[4];
+    VARCHAR     cod_tar[2];
+    VARCHAR     monto[12];
+    VARCHAR     nro_lot[3];
+    VARCHAR     mod_env[2];
+    VARCHAR     descrip[30];
+    short       NULL1;
+
+EXEC SQL END DECLARE SECTION;
+
+
+void getFechaActual(char *fecha)
+{
+struct tm	*newtime;
+time_t	        ltime;
+
+    time(&ltime);
+    newtime=localtime(&ltime);
+
+    sprintf(fecha, "%02d/%02d/%02d", newtime->tm_mday, 
+	           newtime->tm_mon+1, newtime->tm_year);
+}
+
+int open_db(str_login *data)
+{
+int SqlErrno;
+
+    strcpy((char *)userid.arr, data->userid);
+    userid.len=strlen(data->userid);
+    strcpy((char *)passwd.arr, data->passwd);
+    passwd.len=strlen(data->passwd);
+
+    EXEC SQL
+	CONNECT :userid IDENTIFIED BY :passwd;
+    if (sqlca.sqlcode!=OK)
+       {
+	  SqlErrno=sqlca.sqlcode;
+          printf("error al conectarse a la Base de Datos\n");
+          printf("Us [%*.*s] Pa [%*.*s]\n",passwd.len,passwd.len,
+          passwd.arr,userid.len,userid.len,userid.arr);
+          printf("Error [%d]\n",SqlErrno);
+	  return NOOK;
+       }
+    SqlErrno=OK;
+    return OK;
+}
+
+void init()
+{
+    str_login	login_data;
+
+    strcpy(login_data.userid, "u601");
+    strcpy(login_data.passwd, "u601");
+    open_db(&login_data);
+}
+
+int comp_cod_aut(char *cod1, char *cod2)
+{
+    return ((!strncmp(cod1, cod2, 6)) || (!strncmp(cod1, &cod2[2], 6)));
+}
+
+void encabe()
+{
+
+  fprintf(fsal, "\nEmisor       Nro Trx     Caja   Numero de tarjeta     Cod Aut     Fecha Trx  Lote  Envio  Monto  Estado\n");
+  fprintf(fsal, "------       -------     ----   -----------------     -------     ---------  ----  -----  -----  ------\n\n");
+
+}
+
+void imp_totales(double TotNt, double TotAdm, int QTrxNt, int QTrxAdm)
+{
+
+  fprintf(fsal, "\n\n\t Totales Nueva Tienda : \n");
+  fprintf(fsal, "\t\t\t\t Total de transacciones : %ld \n", QTrxNt);
+  fprintf(fsal, "\t\t\t\t Monto Total : %6.2f \n", TotNt);
+  fprintf(fsal, "\n\t Totales Administrador : \n");
+  fprintf(fsal, "\t\t\t\t Total de transacciones : %ld \n", QTrxAdm);
+  fprintf(fsal, "\t\t\t\t Monto Total : %6.2f \n", TotAdm);
+
+}
+   
+
+int main (int argc, char *argv[])
+{
+char buffer[256];
+char buffer2[256];
+
+FILE *fvtacard, *fanom, *fpending;
+FILE *fvta, *fpend;
+char fec[15];
+int cont=0, nro, ret1, ret2;
+int TrxNt=0, TrxNtTar=0, TrxAdm=0, TrxPend=0, TrxPendTar=0; 
+double dMontoSumNt=0.0;
+double dMontoSumNtTar=0.0;
+double dMontoSumAdm=0.0;
+double dMontoSumPend=0.0;
+double dMontoSumPendTar=0.0;
+char filename[100];
+char desc[8];
+char modo_envio[4];
+char fecha_ant[5];
+char cod_tar_ant[3];
+char entrada[15];
+int  cerrar=0;
+/* Modificado 28/02/2000 
+   Contador para ubicar la primera posicion del numero de tarjeta
+   que es distinto a cero y compararla con el valor de la tabla.  */
+int  i;
+
+    if (argc<2)
+    {
+         printf ("\nUso checker [nombre-file]\n\n");
+         exit(1);
+    }
+
+    init();
+
+    strcpy(entrada, argv[1]); 
+    strncpy(fecha_ant, &entrada[8], 4);
+    printf("\nFecha [%s]\n", fecha_ant);
+    
+    printf("\nApertura de archivo [%s]\n", argv[1]);
+    if ((fvtacard=fopen(argv[1], "r"))==NULL)
+    {
+         printf ("\nError: Apertura de archivo %s\n", argv[1]);
+         exit(1);
+    }
+
+    strcpy(filename, "anomal.");
+    strcat(filename, fecha_ant);
+    printf("\nGenerando [%s] ...\n", filename);
+    if ((fanom=fopen(filename, "w"))==NULL)
+    {
+         printf("\nError: Apertura de archivo %s\n", filename);
+         exit(1);
+    }
+    
+    strcpy(filename, "salida.");
+    strcat(filename, fecha_ant);
+    printf("\nGenerando [%s] ...\n", filename);
+    if ((fsal=fopen(filename, "w"))==NULL)
+    {
+         printf("\nError: Apertura de archivo %s\n", filename);
+         exit(1);
+    }
+
+    strcpy(filename, "pending.");
+    strcat(filename, fecha_ant);
+    printf("\nGenerando [%s] ...\n", filename);
+    if ((fpending=fopen(filename, "w"))==NULL)
+    {
+         printf("\nError: Apertura de archivo %s\n", filename);
+         exit(1);
+    }
+    
+    getFechaActual(fec);
+
+    fprintf(fsal, "\n\t\t\t\t\Listado de Control de Cierre de Lote \n\n");
+    fprintf(fsal, "\t\t\t\t\t\t\t\t\t Fecha : %s \n", fec);
+    encabe();
+
+    strcpy(cod_tar_ant, "00");
+
+    while(fgets(buffer,sizeof(buffer),fvtacard)!=NULL)
+    {
+       cont++;
+       if (cont==60)
+       {
+          fprintf(fsal, "\f");
+          encabe();
+          cont=0;
+       }
+
+       strncpy(TrxRead.nro_caj, buffer, 5);
+       strncpy(TrxRead.nro_trx, &buffer[5], 4);
+       strncpy(TrxRead.cod_tar, &buffer[9], 2);
+       strncpy(TrxRead.nro_tar, &buffer[11], 20);
+       strncpy(TrxRead.cod_aut, &buffer[31], 8);
+       strncpy(TrxRead.monto, &buffer[39], 14);
+       strncpy(TrxRead.fecha, &buffer[53], 6);
+       strncpy(TrxRead.hora, &buffer[67], 4);  
+       strncpy(TrxRead.plan, &buffer[71], 2);  
+       strncpy(TrxRead.cuotas, &buffer[73], 3);  
+
+       if (TrxRead.plan[0]=='\n')
+          {
+       strncpy(TrxRead.plan, "00",2);  
+       strncpy(TrxRead.cuotas, "001",3);  
+          }   
+       strcpy((char *)cod_tar.arr, TrxRead.cod_tar);
+       cod_tar.len=strlen(TrxRead.cod_tar);
+
+       if (strcmp(TrxRead.cod_tar, cod_tar_ant))
+       {
+          /* Cambia el tipo de tarjeta */
+          if (cerrar)
+          {
+            fprintf(fvta, "\n\n\t\t\t\tTotal de operaciones: %ld\n", TrxNtTar); 
+            fprintf(fvta, "\t\t\t\tImporte total       : %.2f\n", dMontoSumNtTar); 
+            fprintf(fpend, "\n\n\t\t\t\tTotal de operaciones: %ld\n", TrxPendTar); 
+            fprintf(fpend, "\t\t\t\tImporte total       : %.2f\n", dMontoSumPendTar); 
+            close(fpend);
+            close(fvta);
+          }
+          else
+          {
+            cerrar=1;
+          }
+
+          EXEC SQL
+              SELECT descrip
+              INTO :descrip
+              FROM cred_tarj
+              WHERE cod_tar=:cod_tar;
+
+          printf("Salida del la consulta [%d] \n", sqlca.sqlcode);
+
+          if (sqlca.sqlcode == !0)
+          {   
+             printf(" ERROR: No puede obtener informacion de cred_tarj  [%d]\n",
+                     sqlca.sqlcode);
+          } 
+                
+ 
+          memset(filename, 0, sizeof(filename)); 
+          strncpy(filename, (char *)descrip.arr, 3);
+          strcat(filename, "pend.");
+          strcat(filename, fecha_ant);
+
+          printf("\nGenerando [%s] ...\n", filename);
+          if ((fpend=fopen(filename, "w"))==NULL)
+          {
+             printf ("\nError: Apertura de archivo %s\n", filename);
+             exit(1);
+          }
+
+          fprintf(fpend, "\n\tCOTO C.I.C.S.A.\t\t\tPGM: checker\n"); 
+          fprintf(fpend, "\tFecha: %s\n", fec);
+          fprintf(fpend, "\n\n\t\t\tListado de pendientes por tarjeta\n"); 
+          fprintf(fpend, "\n\n\t\tTarjeta: %s\n\n\n", descrip.arr); 
+
+          memset(filename, 0, sizeof(filename)); 
+          strncpy(filename, (char *)descrip.arr, 3);
+          strcat(filename, "vta.");
+          strcat(filename, fecha_ant);
+
+          printf("\nGenerando [%s] ...\n", filename);
+          if ((fvta=fopen(filename, "w"))==NULL)
+          {
+             printf ("\nError: Apertura de archivo %s\n", filename);
+             exit(1);
+          }
+
+          fprintf(fvta, "\n\tCOTO C.I.C.S.A.\t\t\tPGM: checker\n"); 
+          fprintf(fvta, "\tFecha: %s\n", fec);
+          fprintf(fvta, "\n\n\t\t\tListado de ventas por tarjeta\n"); 
+          fprintf(fvta, "\n\n\t\tTarjeta: %s\n\n\n", descrip.arr); 
+
+          strcpy(cod_tar_ant, TrxRead.cod_tar);
+
+/* Inicializo acumuladores de tipo de tarjetas */
+
+          TrxNtTar=0;
+          dMontoSumNtTar=0.0;
+          TrxPendTar=0;
+          dMontoSumPendTar=0.0;
+
+       }
+
+/* Acumulo totales para Nueva Tienda */
+ 
+       TrxNt++;
+       dMontoSumNt+=atof(TrxRead.monto);
+       TrxNtTar++;
+       dMontoSumNtTar+=atof(TrxRead.monto);
+        
+       strcpy((char *)nro_caj.arr, TrxRead.nro_caj);
+       nro_caj.len=strlen(TrxRead.nro_caj);
+       strcpy((char *)nro_trx.arr, TrxRead.nro_trx);
+       nro_trx.len=strlen(TrxRead.nro_trx);
+
+       memset(monto.arr, 0, sizeof(monto.arr));
+
+       EXEC SQL
+           SELECT nro_tar, cod_aut, monto, nro_lot, mod_env
+              INTO :nro_tar, :cod_aut:NULL1, :monto, :nro_lot, :mod_env
+              FROM cred_trx
+              WHERE nro_caj=:nro_caj and 
+                    nro_trx=:nro_trx and
+                    cod_tar=:cod_tar and
+              (cod_est='00' or cod_est='02' or cod_est='04' or cod_est='12' or 
+               cod_est='10');
+ 
+       if (NULL1==-1)
+       {
+          strncpy((char *)cod_aut.arr, "", sizeof(cod_aut.arr));
+       }
+ 
+       if ((sqlca.sqlcode!=0)&&(sqlca.sqlcode!=1403))
+       {
+          printf("Error en Select %ld \n", sqlca.sqlcode);
+          exit(1);
+       }
+         
+       else if (sqlca.sqlcode==1403)
+            {
+
+
+
+               memset(buffer2, '\0', strlen(buffer2));
+               strncpy(buffer2, buffer, 61);
+               strncat(buffer2, fecha_ant,4);
+               strncat(buffer2, TrxRead.hora,4);
+               strncat(buffer2, TrxRead.plan,2);   /*cuotas*/
+               strncat(buffer2, TrxRead.cuotas,3);   /*cuotas*/
+               strcat(buffer2, "\n");
+
+
+               strcpy(desc, "PEND");     /* Caso 1 Transaccion pendiente */
+               strcpy(modo_envio, "--");
+               fprintf(fpending, "%s", buffer2);
+               fprintf(fpend, "%s", buffer);
+
+/* Acumulo totales de pendientes */
+
+               TrxPend++;
+               dMontoSumPend+=atof(TrxRead.monto);
+               TrxPendTar++;
+               dMontoSumPendTar+=atof(TrxRead.monto);
+
+            }
+            else    /* Comparacion de los campos cod_aut y nro_tar*/
+            {
+
+/* Acumulo totales para el Administrador */
+           
+               TrxAdm++;
+               dMontoSumAdm+=atof((char *)monto.arr);
+      
+               /* Modificado 28/02/2000 
+               Se obtiene la primera posiciòn distinta de cero de la variable
+               TrxRead.nro_tar para compararla con la obtenida por Oracle */   
+               
+               i=0;
+               while ( (TrxRead.nro_tar[i]=='0') && (i<MAX_LONG_TARJ) )
+                    i++;
+            /* Se comenta esta linea para reemplazarla por la siguiente
+               ret1=strncmp((char *)nro_tar.arr, &TrxRead.nro_tar[4], 16); */
+               ret1=strncmp((char *)nro_tar.arr, &TrxRead.nro_tar[i], 
+                                                 MAX_LONG_TARJ-i);
+               /* Fin modificacion 28/02/2000 */
+   
+               ret2=comp_cod_aut((char *)cod_aut.arr, TrxRead.cod_aut);
+                 
+               if ((ret1!=0)&&(ret2!=0))   
+               {
+                  strcpy(desc, "ERROR");  /* Caso 2 No coincide nada*/
+               }
+
+               else if (ret2!=0)    /* Caso 3 No coincide cod_aut */
+                    {   
+                        strcpy(desc, "NOOK(1)");
+                        fprintf(fanom, "%s", buffer);
+                    }
+
+                    else if (ret1!=0) /* Caso 4 No coincide nro_tar */
+                         {
+                            strcpy(desc, "NOOK(2)");
+                            fprintf(fanom, "%s", buffer);
+                         }
+ 
+                         else /* Caso 5 Estado OK */
+                         {
+                            strcpy(desc, "(OK)");    /* Caso 2 */
+                         }
+
+             } /* Fin del else de la comparacion de los campos */
+
+ 
+       if (!strncmp((char *)mod_env.arr,"00",2))
+       {
+           strcpy(modo_envio, "on");
+       }
+       else
+       {
+           strcpy(modo_envio, "off");
+       }
+
+       fprintf(fvta, "%s", buffer);
+
+       /* Modificacion 28/02/2000 
+          Se cambio el 4 al imprimir TrxRead.nro_tar por la variable i, 
+          que contiene la primera posicion distinta de cero del nro tarjeta */
+
+       fprintf(fsal, "%9s %7s %13s %19s %12s %11s %6s %5s %10s %8s\n",
+                       TrxRead.cod_tar, TrxRead.nro_trx, TrxRead.nro_caj,
+                       &TrxRead.nro_tar[i], TrxRead.cod_aut, TrxRead.fecha,
+                       nro_lot.arr, modo_envio, TrxRead.monto, desc);
+
+    } /* Fin del while ppal. */
+
+    imp_totales(dMontoSumNt, dMontoSumAdm/100, TrxNt, TrxAdm);
+
+    fprintf(fvta, "\n\n\t\t\t\tTotal de operaciones: %ld\n", TrxNtTar); 
+    fprintf(fvta, "\t\t\t\tImporte total       : %.2f\n", dMontoSumNtTar); 
+
+    fprintf(fpend, "\n\n\t\t\t\tTotal de operaciones: %ld\n", TrxPendTar); 
+    fprintf(fpend, "\t\t\t\tImporte total       : %.2f\n", dMontoSumPendTar); 
+
+    fclose(fvtacard);
+    fclose(fanom);
+    fclose(fpending);
+    fclose(fsal);
+    fclose(fvta);
+    fclose(fpend);
+
+}
